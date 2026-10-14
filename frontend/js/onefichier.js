@@ -285,11 +285,15 @@ function renderOfView() {
   const total = done.reduce((sum, e) => sum + (e.remote_size || e.size || 0), 0);
   const exportWarn = done.length && state.of.indexCopies && !state.of.indexCopies.last_export_at
     ? " · ⚠ index jamais exporté hors du serveur (Réglages › 1fichier)" : "";
+  // Compteur des envois marqués (version 50) : visible dès l'ouverture de l'onglet.
+  const absents = done.filter((e) => e.etat === "absent").length;
+  const corrompus = done.filter((e) => e.etat === "corrompu").length;
+  const problemesWarn = absents || corrompus ? ` · ⚠ ${absents} absent(s), ${corrompus} corrompu(s)` : "";
   const lastRun = state.of.checks && state.of.checks.last_run;
   const lostWarn = lastRun && lastRun.links_lost && lastRun.links_lost.length
     ? ` · ⚠ ${lastRun.links_lost.length} lien(s) introuvable(s) au dernier contrôle` : "";
   $("of-sub").textContent = state.of.configured
-    ? `${NF0.format(done.length)} élément(s) · ${formatSize(total)} · index : ${state.of.indexFile || "—"}${state.of.metaRunning ? " · récupération des fiches TMDB en cours…" : ""}${exportWarn}${lostWarn}`
+    ? `${NF0.format(done.length)} élément(s) · ${formatSize(total)} · index : ${state.of.indexFile || "—"}${state.of.metaRunning ? " · récupération des fiches TMDB en cours…" : ""}${exportWarn}${lostWarn}${problemesWarn}`
     : "1fichier n'est pas configuré.";
 
   renderOfStats();

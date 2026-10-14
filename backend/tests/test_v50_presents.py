@@ -87,3 +87,32 @@ def test_archive_abimee_compte_comme_erreur_1fichier(monkeypatch):
     monkeypatch.setattr(onefichier, "_run_7z", lambda *a, **k: SimpleNamespace(returncode=2, stdout="", stderr="CRC error"))
     with pytest.raises(onefichier.ArchiveCorrompue):
         onefichier._7z_test("/nonexistent.7z", "x")
+
+
+def test_taille_distante_differente_marque_l_archive(env, monkeypatch):
+    import asyncio
+    from app import onefichier
+    onefichier._update(lambda d: d["entries"].update({"301": {
+        "kind": "film", "status": "done", "url": "https://1fichier.com/?a301", "password": "PW301-XXXXXXXXXX",
+        "archive_name": "tmdb-301.7z", "folder": "tmdb-301", "folder_id": 9, "remote_size": 1000, "size": 1000}}))
+
+    async def faux_call(client, method, path, payload=None):
+        return {"status": "OK", "files": [{"filename": "tmdb-301.7z", "size": 999, "date": "2026-10-01 10:00:00"}]}
+
+    monkeypatch.setattr(onefichier, "_call", faux_call)
+    resultat = asyncio.run(onefichier.check_entry("301"))
+    assert resultat["link_ok"] is True and resultat["taille_ok"] is False
+    assert onefichier.etat_fichier(onefichier._get_entry("301")) == "corrompu"
+
+
+def test_un_seul_test_par_archive_dans_un_passage(env):
+    import asyncio
+    from app import onefichier
+    onefichier._update(lambda d: d["entries"].update({
+        "401": {"kind": "film", "status": "done", "remote_size": 1000, "size": 1000, "folder": "a", "archive_name": "a.7z"},
+        "402": {"kind": "film", "status": "done", "remote_size": 1000, "size": 1000, "folder": "b", "archive_name": "b.7z"},
+    }))
+    premier = asyncio.run(onefichier._pick_restore_test())
+    autre = asyncio.run(onefichier._pick_restore_test(frozenset({premier})))
+    assert premier in {"401", "402"} and autre in {"401", "402"} and autre != premier
+    assert asyncio.run(onefichier._pick_restore_test(frozenset({"401", "402"}))) is None
