@@ -1524,6 +1524,11 @@ async def _after_backup(job, name: str, unit: str, kind: str, show: Optional[str
                 job.emit({"type": "item_log", "item": name, "line": "[dry-run] copie locale supprimée (simulé)"})
                 job.emit({"type": "item_done", "item": name})
                 return
+            if not config.ALLOW_DELETE:  # garde à l'exécution (version 45)
+                log_action("PARTIEL", "LIBERER", f"{unit} (sauvegardé sur 1fichier, suppression désactivée : ALLOW_DELETE=false)")
+                job.emit({"type": "item_partial", "item": name,
+                          "error": "Sauvegardé sur 1fichier, mais la copie locale n'a pas été supprimée (ALLOW_DELETE=false)."})
+                return
             from . import jobs as jobs_mod  # import tardif : jobs importe déjà onefichier
             try:
                 await asyncio.to_thread(jobs_mod._remove_path, unit)
@@ -1553,9 +1558,9 @@ async def _after_backup(job, name: str, unit: str, kind: str, show: Optional[str
                 job.dest_names[unit] = named
         if not dry:
             os.makedirs(dest_dir, exist_ok=True)
-        # Une copie par disque, comme les autres copies : l'emplacement du disque est pris ici.
-        async with scheduler.slot(job, "disk", jobs_mod.disk_target(job)):
-            await jobs_mod._copy_or_move_one(job, unit, dest_dir, move=True)
+        # Une copie par disque, comme les autres copies : l'emplacement du disque est pris par _copy_or_move_one
+        # (version 45), après l'attente d'une plage horaire.
+        await jobs_mod._copy_or_move_one(job, unit, dest_dir, move=True)
     except Exception as exc:
         job.emit({"type": "item_partial", "item": name,
                   "error": f"Sauvegardé sur 1fichier, mais l'étape suivante a échoué : {exc}"})

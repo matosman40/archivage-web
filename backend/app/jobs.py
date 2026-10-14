@@ -15,8 +15,10 @@ que si le résultat est VÉRIFIÉ. Aucun échec ne doit plus passer en silence :
 """
 import asyncio
 import hashlib
+import json
 import os
 import re
+import signal
 import time
 import uuid
 from typing import Optional
@@ -29,13 +31,32 @@ PROGRESS_RE = re.compile(r"(\d+)%")
 # -a serait trop strict pour des disques exFAT/NTFS/FAT : rsync tenterait de
 # chown/chmod et renverrait l'exit code 23 alors que les fichiers sont copiés.
 # On garde contenu, liens et dates (les dates servent à ne pas recopier).
+# Transferts partiels (version 45) : rsync écrit un fichier interrompu DANS ce dossier caché, pas sous
+# son nom final. Une coupure ou un disque plein ne laisse donc jamais un film tronqué que la bibliothèque
+# prendrait pour complet. À la relance, rsync reprend depuis ce dossier, puis le supprime.
+PARTIAL_DIR = ".archivage-partiel"
+
 RSYNC_OPTS = [
     "-rlt",
     "--no-perms", "--no-owner", "--no-group",
     "--modify-window=2",   # FAT/exFAT : dates à 2 s près
-    "--partial",
+    f"--partial-dir={PARTIAL_DIR}",
+    # Un transfert depuis un disque ne doit jamais ramener les restes partiels d'une copie interrompue.
+    f"--exclude={PARTIAL_DIR}/",
     "--info=progress2",
 ]
+
+
+def _walk(path: str):
+    """os.walk qui ignore le dossier des transferts partiels (voir PARTIAL_DIR)."""
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d != PARTIAL_DIR]
+        yield root, dirs, files
+
+
+def _taille(path: str) -> int:
+    """Taille d'une entrée sans suivre les liens : un lien (même cassé) a sa propre taille."""
+    return os.lstat(path).st_size
 
 
 def _readonly_hint(exc: BaseException) -> str:
@@ -77,6 +98,11 @@ class Job:
         self.created_at = time.time()
         self.subscribers: list[asyncio.Queue] = []
         self.events: list[dict] = []
+        # Tâche reprise après un redémarrage du serveur (version 45) : les éléments déjà traités sont passés.
+        self.resumed = False
+        # Espace réservé sur le disque de destination, par élément (version 45).
+        self.reservation: dict[str, int] = {}
+        self.reservation_dev: Optional[int] = None
 
     def emit(self, event: dict) -> None:
         event = {**event, "ts": time.time()}
@@ -146,7 +172,169 @@ def create_job(operation: str, media_type: str, items: list[str],
               adult=adult)
     _purge_finished_jobs()
     JOBS[job_id] = job
+    persist_pending()
     return job
+
+
+# ---------------------------------------------------------------------
+# Espace réservé (version 45)
+# ---------------------------------------------------------------------
+# Le contrôle d'espace fait à la création d'une tâche ne suffit pas : deux tâches créées l'une après
+# l'autre voyaient le même espace libre, et la seconde échouait en pleine copie. Chaque tâche réserve
+# donc la taille de ses éléments sur le disque (identifié par son périphérique) jusqu'à leur traitement.
+
+_RESERVED: dict[int, int] = {}  # périphérique -> octets réservés par les tâches en cours
+
+
+def device_of(path: str) -> Optional[int]:
+    """Périphérique qui porte `path` (ou son plus proche ancêtre existant)."""
+    courant = os.path.normpath(path)
+    while not os.path.exists(courant) and os.path.dirname(courant) != courant:
+        courant = os.path.dirname(courant)
+    try:
+        return os.stat(courant).st_dev
+    except OSError:
+        return None
+
+
+def reserved_bytes(dev: Optional[int]) -> int:
+    return _RESERVED.get(dev, 0) if dev is not None else 0
+
+
+def reserve_for_job(job: Job) -> None:
+    """Réserve l'espace nécessaire aux éléments d'une copie ou d'un déplacement."""
+    if config.settings.dry_run or job.operation not in ("copy", "move") or not job.destination:
+        return
+    dev = device_of(job.destination)
+    if dev is None:
+        return
+    sizes = {}
+    for item in job.items:
+        try:
+            sizes[item] = sum(_files_under(item).values())
+        except OSError:
+            sizes[item] = 0
+    job.reservation = sizes
+    job.reservation_dev = dev
+    _RESERVED[dev] = _RESERVED.get(dev, 0) + sum(sizes.values())
+
+
+def _liberer_reservation(job: Job, item: str) -> None:
+    size = job.reservation.pop(item, 0)
+    dev = job.reservation_dev
+    if size and dev is not None:
+        restant = _RESERVED.get(dev, 0) - size
+        if restant > 0:
+            _RESERVED[dev] = restant
+        else:
+            _RESERVED.pop(dev, None)
+
+
+def _liberer_toutes_reservations(job: Job) -> None:
+    for item in list(job.reservation):
+        _liberer_reservation(job, item)
+
+
+# ---------------------------------------------------------------------
+# Tâches en attente, persistées (version 45)
+# ---------------------------------------------------------------------
+# Les tâches non terminées sont écrites dans un fichier à côté des réglages (volume /data). Après un
+# redémarrage du serveur (par ex. `docker compose up -d --build`), elles reprennent : une copie reprend
+# sa partie déjà transférée, un déplacement ne retire la source qu'après vérification.
+
+PENDING_FILE_NAME = "jobs-pending.json"
+PERSISTED_OPERATIONS = ("copy", "move", "delete")
+
+
+def pending_file() -> str:
+    return os.path.join(os.path.dirname(config.SETTINGS_FILE) or ".", PENDING_FILE_NAME)
+
+
+def persist_pending() -> None:
+    """Écrit les tâches copie, déplacement et suppression non terminées (écriture atomique)."""
+    entries = [
+        {
+            "id": j.id,
+            "operation": j.operation,
+            "media_type": j.media_type,
+            "items": list(j.items),
+            "destination": j.destination,
+            "merge": j.merge,
+            "dest_names": dict(j.dest_names),
+            "dest_dirs": dict(j.dest_dirs),
+            "priority": j.priority,
+            "adult": j.adult,
+        }
+        for j in JOBS.values()
+        if j.status != "done" and j.operation in PERSISTED_OPERATIONS
+    ]
+    path = pending_file()
+    tmp = f"{path}.tmp"
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as exc:
+        log_action("ECHEC", "FILE", f"sauvegarde des tâches en attente impossible ({exc})")
+
+
+def _nettoyer_temporaires(job: Job) -> None:
+    """Après un arrêt BRUTAL (coupure, arrêt forcé), rsync laisse à destination un fichier caché
+    « .nom.XXXXXX » : le transfert n'a pas pu le ranger dans le dossier partiel. Ce fichier n'est jamais
+    pris pour un film (nom caché) ; il est retiré avant de relancer le transfert, qui repart de zéro."""
+    for item in job.items:
+        dest_dir = job.dest_dirs.get(item, job.destination)
+        if not dest_dir:
+            continue
+        prefixe = f".{job.dest_names.get(item) or _name(item)}."
+        try:
+            entrees = os.listdir(dest_dir)
+        except OSError:
+            continue
+        for entree in entrees:
+            # rsync : « .» + nom + « . » + six caractères aléatoires.
+            if not (entree.startswith(prefixe) and len(entree) == len(prefixe) + 6):
+                continue
+            chemin = os.path.join(dest_dir, entree)
+            if os.path.isfile(chemin) and not os.path.islink(chemin):
+                try:
+                    os.remove(chemin)
+                    log_action("NETTOYAGE", job.operation.upper(), f"{chemin} (transfert interrompu brutalement)")
+                except OSError as exc:
+                    log_action("ECHEC", "NETTOYAGE", f"{chemin} ({exc})")
+
+
+def restore_pending() -> list[Job]:
+    """Recrée les tâches non terminées au démarrage. Renvoie celles qu'il faut lancer."""
+    try:
+        with open(pending_file(), "r", encoding="utf-8") as fh:
+            entries = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    restored: list[Job] = []
+    for e in entries:
+        try:
+            job = Job(str(e["id"]), str(e["operation"]), str(e["media_type"]), [str(i) for i in e["items"]],
+                      e.get("destination"), bool(e.get("merge")), e.get("dest_names") or {},
+                      e.get("dest_dirs") or {}, e.get("priority", scheduler.DEFAULT_PRIORITY),
+                      adult=bool(e.get("adult")))
+        except (KeyError, TypeError, ValueError):
+            continue
+        job.resumed = True
+        JOBS[job.id] = job
+        if job.operation in ("copy", "move"):
+            _nettoyer_temporaires(job)
+        reserve_for_job(job)
+        restored.append(job)
+        log_action("REPRISE", job.operation.upper(),
+                   f"tâche {job.id} reprise après redémarrage ({len(job.items)} élément(s))")
+    persist_pending()
+    return restored
 
 
 # ---------------------------------------------------------------------
@@ -162,10 +350,10 @@ def _files_under(path: str) -> dict[str, int]:
     if os.path.isfile(path):
         return {os.path.basename(path): os.path.getsize(path)}
     result: dict[str, int] = {}
-    for root, _dirs, files in os.walk(path):
+    for root, _dirs, files in _walk(path):
         for f in files:
             full = os.path.join(root, f)
-            result[os.path.relpath(full, path)] = os.path.getsize(full)
+            result[os.path.relpath(full, path)] = _taille(full)
     return result
 
 
@@ -192,7 +380,7 @@ def _chemins_sous(path: str) -> dict[str, str]:
     if os.path.isfile(path):
         return {os.path.basename(path): path}
     return {os.path.relpath(os.path.join(root, f), path): os.path.join(root, f)
-            for root, _dirs, files in os.walk(path) for f in files}
+            for root, _dirs, files in _walk(path) for f in files}
 
 
 def _meme_debut(a: str, b: str, octets: int) -> bool:
@@ -351,6 +539,7 @@ async def run_job(job: Job) -> None:
     labels = await asyncio.to_thread(_queue_labels, job)  # lit l'index 1fichier : hors boucle
     job.emit({"type": "job_start", "total_items": len(job.items), "items": labels})
 
+    interrompue = False
     try:
         if job.operation == "delete":
             await _run_delete(job)
@@ -360,23 +549,30 @@ async def run_job(job: Job) -> None:
             await onefichier.run_restore(job)
         else:
             await _run_copy_or_move(job)
+    except asyncio.CancelledError:
+        # Arrêt du serveur en cours de tâche : elle reste dans le fichier d'attente et reprendra au démarrage.
+        interrompue = True
+        raise
     except Exception as exc:  # filet de sécurité : ne jamais finir en silence
         log_action("ECHEC", job.operation.upper(), f"job {job.id} : {exc}")
         job.emit({"type": "job_error", "error": f"Erreur inattendue : {exc}"})
     finally:
-        job.status = "done"
-        counts = {"ok": 0, "error": 0, "partial": 0, "skipped": 0}
-        for e in job.events:
-            t = e["type"]
-            if t == "item_done":
-                counts["ok"] += 1
-            elif t == "item_error":
-                counts["error"] += 1
-            elif t == "item_partial":
-                counts["partial"] += 1
-            elif t == "item_skipped":
-                counts["skipped"] += 1
-        job.emit({"type": "job_done", "summary": counts})
+        _liberer_toutes_reservations(job)
+        if not interrompue:
+            job.status = "done"
+            counts = {"ok": 0, "error": 0, "partial": 0, "skipped": 0}
+            for e in job.events:
+                t = e["type"]
+                if t == "item_done":
+                    counts["ok"] += 1
+                elif t == "item_error":
+                    counts["error"] += 1
+                elif t == "item_partial":
+                    counts["partial"] += 1
+                elif t == "item_skipped":
+                    counts["skipped"] += 1
+            job.emit({"type": "job_done", "summary": counts})
+            persist_pending()
 
 
 async def _run_delete(job: Job) -> None:
@@ -387,6 +583,10 @@ async def _run_delete(job: Job) -> None:
         if not os.path.lexists(item):
             job.emit({"type": "item_skipped", "item": name, "reason": "missing",
                       "message": "Déjà absent."})
+            continue
+
+        if not config.ALLOW_DELETE:  # garde à l'exécution (version 45), en plus de la création de la tâche
+            _fail(job, item, "suppression désactivée sur ce serveur (ALLOW_DELETE=false)")
             continue
 
         if not _suppression_autorisee(item):
@@ -419,17 +619,21 @@ async def _run_copy_or_move(job: Job) -> None:
                 _fail(job, item, f"destination inaccessible ({exc})", exc)
             return
 
-    target = disk_target(job)  # une seule copie à la fois PAR disque
+    # Une seule copie à la fois PAR disque. L'emplacement est pris par élément, dans _copy_or_move_one,
+    # APRÈS l'attente d'une plage horaire : une tâche hors plage ne bloque plus les tâches urgentes.
+    target = disk_target(job)
     for item in job.items:
+        if ARRETE:  # arrêt du serveur : la tâche reste dans le fichier d'attente
+            raise asyncio.CancelledError()
         item_dir = job.dest_dirs.get(item, dest_dir)
         try:
-            # Emplacement tenu pour cet élément seulement : une tâche plus prioritaire passe entre deux éléments.
-            async with scheduler.slot(job, "disk", target):
-                if item_dir != dest_dir and not config.settings.dry_run:
-                    os.makedirs(item_dir, exist_ok=True)
-                await _copy_or_move_one(job, item, item_dir)
+            if item_dir != dest_dir and not config.settings.dry_run:
+                os.makedirs(item_dir, exist_ok=True)
+            await _copy_or_move_one(job, item, item_dir, target=target)
         except Exception as exc:  # un élément défaillant ne bloque pas les autres
             _fail(job, item, f"erreur inattendue ({exc})", exc)
+        finally:
+            _liberer_reservation(job, item)  # l'espace réservé pour cet élément est rendu
 
 
 def bwlimit_args() -> list[str]:
@@ -473,25 +677,39 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
+def _digest_entree(path: str) -> str:
+    """Empreinte d'une entrée. Un lien symbolique est comparé à sa CIBLE (rsync -l le recrée à
+    l'identique) : un lien cassé ne fait plus échouer la vérification de tout un dossier."""
+    if os.path.islink(path):
+        return "lien:" + os.readlink(path)
+    return _sha256_file(path)
+
+
 def _tree_digests(path: str) -> dict[str, str]:
-    """Chemin relatif -> SHA-256, pour un fichier seul (clé vide) ou un dossier entier."""
-    if os.path.isfile(path):
-        return {"": _sha256_file(path)}
+    """Chemin relatif -> empreinte, pour un fichier seul (clé vide) ou un dossier entier."""
+    if os.path.islink(path) or os.path.isfile(path):
+        return {"": _digest_entree(path)}
     out: dict[str, str] = {}
-    for root, _dirs, files in os.walk(path):
+    for root, _dirs, files in _walk(path):
         for f in files:
             full = os.path.join(root, f)
-            out[os.path.relpath(full, path)] = _sha256_file(full)
+            out[os.path.relpath(full, path)] = _digest_entree(full)
     return out
 
 
 def _verify_copy(src: str, dst: str) -> tuple[bool, str]:
     """Vérifie le CONTENU de la copie : chaque fichier de la source doit exister dans `dst`
-    avec la même empreinte. Les fichiers en plus à destination ne sont pas concernés."""
+    avec la même empreinte. Les fichiers en plus à destination ne sont pas concernés.
+    Avec VERIFY_SHA256=false (version 45), seules les tailles sont comparées : bien plus rapide
+    sur un disque lent, mais une altération de même taille passerait inaperçue."""
     if not os.path.lexists(dst):
         return False, "copie absente"
     if os.path.isdir(src) != os.path.isdir(dst):
         return False, "type différent (fichier ou dossier)"
+    if not config.VERIFY_SHA256:
+        if _covered(src, dst):
+            return True, "tailles identiques (SHA-256 désactivé)"
+        return False, "tailles ou fichiers différents (SHA-256 désactivé)"
     wanted = _tree_digests(src)
     if not wanted:
         return True, "rien à vérifier"
@@ -509,6 +727,32 @@ async def _verify_copy_safe(src: str, dst: str) -> tuple[bool, str]:
         return False, f"lecture impossible ({exc})"
 
 
+# Processus rsync en cours, et drapeau d'arrêt du serveur (version 45).
+_RSYNC_PROCS: set = set()
+ARRETE = False
+
+
+async def arreter_transferts(delai: float = 5.0) -> None:
+    """Arrêt propre du serveur : chaque rsync en cours reçoit SIGTERM et range sa copie partielle dans le
+    dossier dédié (PARTIAL_DIR), pour que la relance reprenne au lieu de recommencer. Aucun nouvel élément
+    n'est commencé ensuite : les tâches restent dans le fichier d'attente."""
+    global ARRETE
+    ARRETE = True
+    procs = [p for p in _RSYNC_PROCS if p.returncode is None]
+    for p in procs:
+        try:
+            p.send_signal(signal.SIGCONT)  # un rsync suspendu hors plage ne traite le SIGTERM qu'une fois repris
+            p.send_signal(signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    if procs:
+        log_action("ARRET", "TRANSFERT", f"{len(procs)} transfert(s) arrêté(s) proprement, reprise à la relance")
+        try:
+            await asyncio.wait_for(asyncio.gather(*(p.wait() for p in procs), return_exceptions=True), delai)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def _run_rsync(job: Job, name: str, base_cmd: list[str], control: bool) -> int:
     """Lance rsync pour un élément. Suspendu hors plage, relancé si la vitesse change
     (voir scheduler.control_process) : --partial reprend là où il s'était arrêté."""
@@ -517,6 +761,7 @@ async def _run_rsync(job: Job, name: str, base_cmd: list[str], control: bool) ->
         proc = await asyncio.create_subprocess_exec(
             *base_cmd, *bwlimit_args(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
+        _RSYNC_PROCS.add(proc)
         watcher = None
         if control:
             watcher = asyncio.ensure_future(scheduler.control_process(job, proc, "disk", started_rate))
@@ -524,6 +769,7 @@ async def _run_rsync(job: Job, name: str, base_cmd: list[str], control: bool) ->
             await _stream_rsync_output(job, name, proc)
             returncode = await proc.wait()
         finally:
+            _RSYNC_PROCS.discard(proc)
             if watcher is not None and not watcher.done():
                 watcher.cancel()
         restart = (watcher is not None and watcher.done() and not watcher.cancelled()
@@ -534,7 +780,8 @@ async def _run_rsync(job: Job, name: str, base_cmd: list[str], control: bool) ->
                   "line": "Vitesse changée : copie relancée avec la nouvelle limite (la partie déjà copiée est reprise)."})
 
 
-async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[bool] = None) -> None:
+async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[bool] = None,
+                            target: Optional[str] = None) -> None:
     name = _name(item)
     dest_name = job.dest_names.get(item) or name
     renamed = dest_name != name
@@ -543,6 +790,11 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
     dry = config.settings.dry_run
 
     if not os.path.lexists(item):
+        if job.resumed and os.path.lexists(dest_path):
+            # Tâche reprise après un redémarrage : cet élément était déjà traité avant l'arrêt.
+            job.emit({"type": "item_skipped", "item": name, "reason": "already_done",
+                      "message": "Déjà traité avant le redémarrage du serveur."})
+            return
         _fail(job, item, "source introuvable (déjà déplacée ou supprimée ?)")
         return
 
@@ -563,10 +815,10 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
             job.emit({"type": "item_log", "item": name, "line": "Vérification des empreintes SHA-256…"})
             ok, detail = await _verify_copy_safe(item, dest_path)
             if not ok:
-                _fail(job, item, f"présent à destination mais contenu différent ({detail}) : source conservée")
+                _fail(job, item, f"présent à destination mais vérification en échec ({detail}) : source conservée")
                 return
             job.emit({"type": "item_log", "item": name,
-                      "line": f"Déjà présent, empreintes identiques ({detail}) : retrait de la source."})
+                      "line": f"Déjà présent, vérification réussie ({detail}) : retrait de la source."})
             await _remove_source_after_move(job, item, dest_path)
             return
 
@@ -578,17 +830,33 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
                        f"{item} -> {dest_dir}/ (existe déjà avec un contenu différent)")
             return
         # Copie interrompue (début identique, fichier tronqué) : le transfert la termine.
-        # Avant, elle restait incomplète et chaque relance l'ignorait.
         job.emit({"type": "item_log", "item": name, "line": "Copie interrompue à destination : reprise du transfert."})
 
-    # Le transfert réel n'a lieu que pendant une plage activée (un élément déjà présent passe sans attendre).
+    # Hors plage, rien ne tient l'emplacement du disque : une tâche plus prioritaire passe pendant l'attente.
     await scheduler.wait_for_window(job)
+    if target is None:
+        target = disk_target(job)
+    async with scheduler.slot(job, "disk", target):
+        await _transfert_verifie(job, item, dest_dir, dest_path, renamed, is_move)
+
+
+async def _transfert_verifie(job: Job, item: str, dest_dir: str, dest_path: str,
+                             renamed: bool, is_move: bool) -> None:
+    """Transfert rsync puis vérification SHA-256, puis retrait de la source si déplacement.
+    Appelé avec l'emplacement du disque déjà tenu."""
+    name = _name(item)
+    dry = config.settings.dry_run
     existed_before = os.path.lexists(dest_path)  # vrai seulement en fusion : la copie existait déjà
     job.emit({"type": "item_start", "item": name})
 
     base_cmd = ["rsync", *RSYNC_OPTS]
     if dry:
         base_cmd.append("--dry-run")
+    if job.merge and existed_before:
+        # Fusion (version 45) : une version différente est remplacée, mais l'ancienne est gardée.
+        remplaces = _dossier_remplaces(job, dest_dir)
+        if remplaces:
+            base_cmd += ["--backup", f"--backup-dir={remplaces}"]
     if not renamed:
         base_cmd += [item, dest_dir.rstrip("/") + "/"]
     elif os.path.isdir(item):
@@ -604,7 +872,10 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
         return
 
     if returncode != 0:
-        _fail(job, item, f"rsync exit code {returncode}")
+        if ARRETE:  # transfert arrêté par l'arrêt du serveur : pas une erreur, la relance reprendra
+            raise asyncio.CancelledError()
+        # Le fichier interrompu reste dans le dossier partiel : la relance reprend là où elle s'était arrêtée.
+        _fail(job, item, f"rsync exit code {returncode} ; la partie copiée est conservée et reprendra à la relance")
         return
 
     if dry:
@@ -623,9 +894,16 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
                 note = " ; copie incomplète retirée"
             except OSError as exc:
                 note = f" ; copie non retirée ({exc})"
-        _fail(job, item, f"copie terminée mais empreintes différentes ({detail}){note} : source conservée")
+        _fail(job, item, f"vérification en échec ({detail}){note} : source conservée")
         return
-    job.emit({"type": "item_log", "item": name, "line": f"Empreintes identiques ({detail})."})
+    job.emit({"type": "item_log", "item": name, "line": f"Vérification réussie ({detail})."})
+
+    if job.merge and existed_before:
+        remplaces = _dossier_remplaces(job, dest_dir)
+        anciennes = _compte_remplaces(remplaces, name) if remplaces else 0
+        if anciennes:
+            job.emit({"type": "item_log", "item": name,
+                      "line": f"{anciennes} ancienne(s) version(s) remplacée(s), conservée(s) dans {remplaces}."})
 
     if not is_move:
         log_action("OK", "COPY", f"{item} -> {dest_dir}/")
@@ -636,8 +914,38 @@ async def _copy_or_move_one(job: Job, item: str, dest_dir: str, move: Optional[b
     await _remove_source_after_move(job, item, dest_path)
 
 
+REPLACED_DIR = ".archivage-remplaces"
+
+
+def _dossier_remplaces(job: Job, dest_dir: str) -> Optional[str]:
+    """Dossier où une fusion range les anciennes versions qu'elle remplace (version 45).
+    Il est à la racine de la destination de la tâche, sous un nom caché que la bibliothèque ignore."""
+    if not job.destination:
+        return None
+    rel = os.path.relpath(dest_dir, job.destination)
+    if rel.startswith(os.pardir):
+        rel = os.path.basename(dest_dir.rstrip("/"))
+    return os.path.normpath(os.path.join(job.destination, REPLACED_DIR, job.id, rel))
+
+
+def _compte_remplaces(remplaces: str, name: str) -> int:
+    """Nombre de fichiers gardés dans le dossier des remplacements pour cet élément."""
+    chemin = os.path.join(remplaces, name)
+    if not os.path.lexists(chemin):
+        return 0
+    try:
+        return len(_files_under(chemin))
+    except OSError:
+        return 0
+
+
 async def _remove_source_after_move(job: Job, item: str, dest_path: str) -> None:
     name = _name(item)
+    if not config.ALLOW_DELETE:
+        log_action("PARTIEL", "MOVE", f"{item} -> {dest_path} (copié, suppression de la source désactivée)")
+        job.emit({"type": "item_partial", "item": name,
+                  "error": "Copié avec succès, mais la suppression de la source est désactivée (ALLOW_DELETE=false)."})
+        return
     if not _suppression_autorisee(item):
         log_action("PARTIEL", "MOVE", f"{item} -> {dest_path} (copié, mais source hors zone gérée : non supprimée)")
         job.emit({"type": "item_partial", "item": name,

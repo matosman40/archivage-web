@@ -41,6 +41,14 @@ def _as_bool(value) -> bool:
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
+# Interrupteurs d'exploitation (version 45) : variables d'environnement seulement, pas modifiables depuis l'interface.
+# ALLOW_DELETE=false : aucune suppression de fichier n'est possible (suppression, déplacement qui retire la
+# source, suppression sur disque). Copies et renommages restent disponibles.
+ALLOW_DELETE = _as_bool(os.environ.get("ALLOW_DELETE", "true"))
+# VERIFY_SHA256=false : la vérification après copie compare les tailles au lieu des empreintes SHA-256.
+VERIFY_SHA256 = _as_bool(os.environ.get("VERIFY_SHA256", "true"))
+
+
 def _as_level(value) -> int:
     """Niveau de compression 7z (0 = stockage sans compression, 9 = maximum).
     Borné plutôt que rejeté : une valeur invalide dans settings.json ne doit

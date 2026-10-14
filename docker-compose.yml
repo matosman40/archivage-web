@@ -6,10 +6,16 @@ services:
     image: archivage-films:latest
     container_name: archivage-films
     restart: unless-stopped
+    # Délai avant SIGKILL (version 45) : laisse aux copies en cours le temps de ranger leur partie copiée.
+    stop_grace_period: 30s
     ports:
       - "8843:8080"
     env_file:
       - .env
+    # Utilisateur du processus (version 45) : UID/GID du propriétaire de tes médias sur l'hôte
+    # (`id -u` / `id -g` sur la machine, pour le compte qui possède /DATA/Media). Par défaut 1000.
+    # Si tu le changes après un premier démarrage, le volume /data doit lui aussi appartenir à ce compte.
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       LOG_FILE: /data/archivage.log
       SETTINGS_FILE: /data/settings.json

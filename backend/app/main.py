@@ -178,6 +178,10 @@ def get_config():
         "dest_subdir_series": config.settings.dest_subdir_series,
         "dest_subdir_ebooks": config.settings.dest_subdir_ebooks,
         "delete_confirm_text": config.settings.delete_confirm_text,
+        # Interrupteurs d'exploitation (version 45) et caractères refusés sur les disques, partagés avec l'interface.
+        "allow_delete": config.ALLOW_DELETE,
+        "verify_sha256": config.VERIFY_SHA256,
+        "forbidden_name_chars": "".join(sorted(_FORBIDDEN_NAME_CHARS)),
     }
 
 
@@ -385,6 +389,19 @@ scan_cache.configure(_build_search_items)
 async def _warm_search_cache() -> None:
     # Les listes se construisent pendant le démarrage : la première ouverture est instantanée.
     asyncio.ensure_future(scan_cache.warm_all())
+
+
+@app.on_event("shutdown")
+async def _arreter_transferts_proprement() -> None:
+    # Arrêt du serveur (version 45) : les rsync en cours rangent leur copie partielle, la relance reprendra.
+    await jobs.arreter_transferts()
+
+
+@app.on_event("startup")
+async def _reprendre_taches_en_attente() -> None:
+    # Copies, déplacements et suppressions non terminés avant l'arrêt du serveur (version 45).
+    for job in jobs.restore_pending():
+        _launch(job)
 
 
 @app.on_event("startup")
@@ -651,6 +668,10 @@ async def create_job(req: JobRequest, unlocked: bool = Depends(adult_unlocked)):
     items = [os.path.normpath(i) for i in req.items]
     dry = config.settings.dry_run
 
+    # Interrupteur ALLOW_DELETE (version 45) : une tâche qui retire des fichiers de la source est refusée.
+    if req.operation in ("delete", "move") and not config.ALLOW_DELETE:
+        raise HTTPException(403, "Suppression désactivée sur ce serveur (ALLOW_DELETE=false). Seules les copies sont possibles.")
+
     # Médias adultes : introuvables sans session déverrouillée.
     if adult_media.hidden_paths(items, unlocked):
         raise _hidden_404()
@@ -749,12 +770,13 @@ async def create_job(req: JobRequest, unlocked: bool = Depends(adult_unlocked)):
         except OSError as exc:
             raise HTTPException(400, f"Impossible de lire l'espace libre : {exc}")
 
-        usable = max(0, free - config.settings.safety_margin_bytes)
+        # Espace déjà réservé par les tâches en cours sur ce disque (version 45).
+        usable = max(0, free - config.settings.safety_margin_bytes - jobs.reserved_bytes(jobs.device_of(ancetre)))
         if total_size > usable:
             raise HTTPException(
                 409,
                 f"Espace insuffisant : {total_size} octets requis, {usable} octets utilisables "
-                f"(marge de sécurité {config.settings.safety_margin_bytes} octets).",
+                f"(marge de sécurité {config.settings.safety_margin_bytes} octets, tâches en cours déduites).",
             )
 
     dest_names = {}
@@ -805,6 +827,7 @@ async def create_job(req: JobRequest, unlocked: bool = Depends(adult_unlocked)):
         priority=req.priority,
         adult=adult_media.any_adult(items),
     )
+    jobs.reserve_for_job(job)
     _launch(job)
     return {"job_id": job.id}
 
@@ -823,6 +846,7 @@ def set_job_priority(job_id: str, req: JobPriorityRequest, unlocked: bool = Depe
     if job.status == "done":
         raise HTTPException(409, "Tâche terminée : la priorité ne peut plus être changée.")
     scheduler.set_priority(job, req.priority)
+    jobs.persist_pending()  # la priorité survit à un redémarrage (version 45)
     return {"id": job.id, "priority": job.priority}
 
 
@@ -1056,6 +1080,11 @@ async def onefichier_test():
 
 @app.post("/api/1fichier/archive")
 async def onefichier_archive(req: OneFichierArchiveRequest, unlocked: bool = Depends(adult_unlocked)):
+    # Interrupteur ALLOW_DELETE (version 45) : vérifié en premier, avant toute autre validation.
+    if req.after == "delete" and not config.ALLOW_DELETE:
+        raise HTTPException(403, "Suppression désactivée sur ce serveur (ALLOW_DELETE=false) : la copie locale ne peut pas être retirée.")
+    if req.after == "move" and not config.ALLOW_DELETE:
+        raise HTTPException(403, "Suppression désactivée sur ce serveur (ALLOW_DELETE=false) : le déplacement retire la copie locale.")
     if not req.paths:
         raise HTTPException(400, "Aucun élément sélectionné.")
     if not onefichier.is_configured():
@@ -1373,6 +1402,8 @@ async def get_disk_library(force: bool = False, unlocked: bool = Depends(adult_u
 @app.post("/api/disk-library/transfer")
 async def disk_transfer(req: DiskTransferRequest, unlocked: bool = Depends(adult_unlocked)):
     """Copie ou déplace des éléments d'un disque connecté vers un dossier source du serveur."""
+    if req.mode == "move" and not config.ALLOW_DELETE:
+        raise HTTPException(403, "Déplacement désactivé sur ce serveur (ALLOW_DELETE=false) : il retire l'élément du disque. Utilise la copie.")
     items, kinds = _disk_items(req.items)
     adult = _disk_items_for_session(items, unlocked)
     if len(kinds) != 1:
@@ -1403,15 +1434,17 @@ async def disk_transfer(req: DiskTransferRequest, unlocked: bool = Depends(adult
         free = shutil.disk_usage(dest).free
     except OSError as exc:
         raise HTTPException(400, f"Impossible de lire l'espace libre du serveur : {exc}")
-    usable = max(0, free - config.settings.safety_margin_bytes)
+    usable = max(0, free - config.settings.safety_margin_bytes - jobs.reserved_bytes(jobs.device_of(dest)))
     if total > usable and not dry:
         raise HTTPException(
             409,
-            f"Espace insuffisant sur le serveur : {total} octets requis, {usable} octets utilisables.",
+            f"Espace insuffisant sur le serveur : {total} octets requis, {usable} octets utilisables "
+            f"(tâches en cours déduites).",
         )
 
     job = jobs.create_job(operation=req.mode, media_type=kind, items=items, destination=dest,
                           priority=req.priority, adult=adult)
+    jobs.reserve_for_job(job)
     _launch(job)
     return {"job_id": job.id}
 
@@ -1419,6 +1452,8 @@ async def disk_transfer(req: DiskTransferRequest, unlocked: bool = Depends(adult
 @app.post("/api/disk-library/delete")
 async def disk_delete(req: DiskItemsRequest, unlocked: bool = Depends(adult_unlocked)):
     """Supprime des éléments d'un disque connecté (confirmation tapée obligatoire)."""
+    if not config.ALLOW_DELETE:
+        raise HTTPException(403, "Suppression désactivée sur ce serveur (ALLOW_DELETE=false).")
     items, kinds = _disk_items(req.items)
     adult = _disk_items_for_session(items, unlocked)
     if req.confirm_delete_text != config.settings.delete_confirm_text:

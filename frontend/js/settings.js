@@ -351,6 +351,13 @@ async function refreshDryRunFlag() {
     $("dryrun-flag").classList.toggle("hidden", !cfg.dry_run);
     if (cfg.delete_confirm_text) state.deleteConfirmText = cfg.delete_confirm_text;
     state.tmdbEnabled = !!cfg.tmdb_enabled;
+    if (cfg.forbidden_name_chars) setForbiddenNameChars(cfg.forbidden_name_chars);
+    // ALLOW_DELETE=false (version 45) : sans suppression, les boutons qui retirent un fichier de sa source sont cachés.
+    const sansSuppression = cfg.allow_delete === false;
+    ["action-delete", "action-move", "disk-delete", "disk-move"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle("hidden", sansSuppression);
+    });
   } catch (_) { /* ignore */ }
 }
 

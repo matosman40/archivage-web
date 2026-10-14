@@ -125,7 +125,7 @@ défaut), utilise l'option "un bind mount par disque".
   `operation: "delete"` exige `confirm_delete_text` égal exactement à la
   valeur de `DELETE_CONFIRM_TEXT` (par défaut `SUPPRIMER`). Sans ce champ
   correct, l'API renvoie `403`, indépendamment de ce que fait l'interface —
-  un appel API direct ne peut pas contourner la confirmation. Chaque élément
+  **Limite corrigée en version 45** : cette confirmation protège contre le clic accidentel, pas contre un appel API volontaire, car le texte attendu est lisible par `GET /api/config`. Ce qui limite réellement les suppressions : `ALLOW_DELETE=false` (section 36) et l'accès réseau au serveur (section 33). Chaque élément
   à supprimer doit en plus être physiquement situé sous un dossier source
   configuré.
 - **Chemins limités aux sources** : copier, déplacer et supprimer n'acceptent
@@ -1961,3 +1961,56 @@ fichiers portent la version `v44`).
 - Restriction adulte, sur les films et sur les disques, sans session puis avec session, vérifiée sur l'application
   lancée : les copies adultes n'apparaissent qu'une fois déverrouillé, et le déverrouillage (cinq touches rapides sur le
   titre « Archivage ») fait apparaître l'onglet Adultes.
+
+## 36. Revue copie, déplacement, suppression (version 45)
+
+Revue du moteur de copie, déplacement et suppression. Chaque point corrigé a un test dans
+`backend/tests/test_v45_corrections.py`. Points relevés et corrigés :
+
+- **Fusion (saison, copie sur un dossier existant).** Une version différente déjà présente à destination était
+  remplacée sans trace, et l'élément était annoncé ✓. Désormais l'ancienne version est déplacée dans
+  `<destination>/.archivage-remplaces/<id-de-tâche>/…` (dossier caché, ignoré par la bibliothèque disque), et
+  l'interface indique combien de versions ont été gardées. Un déplacement en fusion ne fait plus disparaître
+  l'ancienne version.
+- **Transfert interrompu.** Pendant le transfert, rsync écrit dans un fichier caché `.nom.XXXXXX`, jamais sous le nom final. Un arrêt propre range la copie partielle dans `.archivage-partiel/` (voir ci-dessous). Une coupure ou un disque plein ne laisse donc jamais un film tronqué que la bibliothèque prendrait pour complet. À la relance, rsync reprend depuis le dossier partiel, puis le supprime. Les restes partiels d'un disque ne sont pas recopiés vers le serveur.
+- **Arrêt du serveur.** Un arrêt propre (`docker compose stop`, SIGTERM) envoie SIGTERM à chaque rsync en cours : la copie partielle est rangée dans `.archivage-partiel/`, la tâche reste en attente, et la relance reprend. Aucun nouvel élément n'est commencé pendant l'arrêt.
+- **Arrêt brutal (coupure, arrêt forcé après le délai de grâce de Docker).** rsync ne peut plus ranger sa copie : un fichier caché `.nom.XXXXXX` reste à la destination. Il n'est jamais pris pour un film (nom caché) et n'est jamais porté au nom final. Au redémarrage, ce temporaire est retiré (journal : NETTOYAGE) et le transfert repart de zéro (journal : REPRISE).
+- **Tâche urgente et plage horaire.** L'emplacement du disque n'est plus tenu pendant l'attente d'une plage :
+  une tâche plus prioritaire passe. La priorité s'applique entre deux éléments, comme le décrit la section 22.
+- **Liens symboliques cassés.** Un lien est comparé à sa cible, et non plus à son contenu. Un lien cassé dans un
+  dossier de film ne fait plus échouer toute la copie, et le message d'erreur ne parle plus d'« empreintes
+  différentes » pour une simple lecture impossible.
+- **Espace disque réservé.** Une tâche réserve la taille de ses éléments sur le disque jusqu'à leur traitement.
+  Deux tâches créées l'une après l'autre ne voient plus le même espace libre. Les tâches en simulation ne
+  réservent rien.
+- **Tâches en attente après un redémarrage.** Les copies, déplacements et suppressions non terminés sont écrits dans
+  `jobs-pending.json` (à côté de `settings.json`, donc dans le volume `/data`) et reprennent au démarrage du
+  serveur. Une tâche interrompue par l'arrêt reste dans ce fichier. Une tâche terminée en sort. Les envois 1fichier
+  ne sont pas concernés : leur état est déjà dans l'index.
+- **Interrupteur de suppression : `ALLOW_DELETE`.** Variable d'environnement, valeur par défaut `true`.
+  Avec `false`, aucun fichier ne peut être supprimé : ni la suppression, ni le déplacement (qui retire la source),
+  ni la suppression sur disque, ni la suppression de la copie locale après un envoi 1fichier (« Libérer le serveur »). Les copies et les renommages restent possibles. Le contrôle est fait à la création
+  de la tâche et à l'exécution. Les boutons correspondants sont cachés dans l'interface.
+- **Vérification par tailles : `VERIFY_SHA256`.** Valeur par défaut `true` (empreintes SHA-256, comme avant).
+  Avec `false`, la vérification compare les tailles seulement : plus rapide sur un disque lent, mais une altération
+  de même taille passe inaperçue. Ce choix reste explicite et documenté.
+- **Utilisateur non root.** Le conteneur tourne avec `PUID`/`PGID` (défaut 1000). Ce sont les identifiants du
+  propriétaire de tes médias sur l'hôte (`id -u`, `id -g`). Le volume `/data` doit appartenir à ce même compte.
+  Un conteneur root pouvait supprimer n'importe quel fichier des montages `:rw` en cas d'erreur de garde.
+- **Vérification de santé.** `HEALTHCHECK` interroge `/api/config` toutes les 60 secondes.
+- **Liste des caractères interdits.** Définie une seule fois côté serveur (`forbidden_name_chars` dans
+  `GET /api/config`) et reprise par l'interface pour nommer les copies.
+- **Confirmation de suppression.** Précision apportée à la section 5 : elle protège contre le clic accidentel,
+  pas contre un appel API volontaire.
+
+**Mise en service.** Avant `docker compose up -d --build`, ajoute dans `.env` les lignes `PUID` et `PGID` (voir
+`.env.example`). Si ton média appartient à un autre compte que 1000, sans cela les écritures échoueront. Pour
+rétablir le comportement précédent des suppressions, rien à faire : `ALLOW_DELETE` vaut `true` par défaut.
+
+**Limites connues, non corrigées.**
+- Après un arrêt brutal, la reprise repart de zéro (voir plus haut) : seul un arrêt propre conserve la copie partielle.
+- Une tâche en attente de plage ne peut pas être interrompue au milieu d'un fichier par une tâche plus prioritaire :
+  la priorité joue entre deux éléments.
+- Les envois et restaurations 1fichier ne sont pas repris automatiquement après un redémarrage (voir plus haut).
+- L'authentification des routes d'écriture reste à ajouter (section 33) : `ALLOW_DELETE=false` limite les dégâts,
+  mais ne remplace pas un contrôle d'accès.

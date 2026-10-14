@@ -19,11 +19,23 @@ function findDiskItem(path) {
   return null;
 }
 
+// Caractères refusés sur exFAT/NTFS : la liste vient du serveur (GET /api/config, version 45), où elle est
+// définie une seule fois. La valeur par défaut ne sert qu'avant la réponse du serveur.
+let forbiddenNameRe = /[<>"/\\|?*\x00-\x1f]/g;
+
+function setForbiddenNameChars(chars) {
+  if (!chars) return;
+  const escaped = String(chars).replace(/[\\\]\[^-]/g, "\\$&");
+  try {
+    forbiddenNameRe = new RegExp(`[${escaped}\\x00-\\x1f]`, "g");
+  } catch (_) { /* liste invalide : on garde la valeur par défaut */ }
+}
+
 // Un titre TMDB peut contenir des caractères interdits sur exFAT/NTFS : « Mission: Impossible » → « Mission - Impossible ».
 function safeDiskName(text) {
   return String(text || "")
     .replace(/:\s*/g, " - ")
-    .replace(/[<>"/\\|?*\x00-\x1f]/g, " ")
+    .replace(forbiddenNameRe, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
