@@ -109,6 +109,8 @@ async function runSearch(term, { silent = false } = {}) {
 
 function setMediaType(type) {
   closeAllOverlays();  // un tiroir ouvert ne reste pas par-dessus le nouvel onglet
+  closeAutoView();
+  if (type === "automatisations") { closeOneFichierView(); closeDiskView(); openAutoView(); return; }
   if (type === "1fichier") { closeDiskView(); openOneFichierView(); return; }
   if (type === "disques") { closeOneFichierView(); openDiskView(); return; }
   closeOneFichierView();

@@ -130,6 +130,7 @@ function bindEvents() {
   // Onglet Disques
   $("disk-view").addEventListener("click", onDiskClick);
   $("disk-view").addEventListener("change", onDiskChange);
+  bindAutomations();
   initIdentify();
   initPerson();
   initAdult();

@@ -2095,3 +2095,53 @@ choix raisonnable, en connaissance du risque décrit en section 36.
 
 **Intégration continue.** `.github/workflows/tests.yml` lance à chaque envoi : les tests du serveur avec rsync et 7z
 réels (aucun test n'est ignoré), pyflakes, la syntaxe JavaScript et la validation de `docker-compose.yml`.
+
+## 38. Automatisations : règles « quand … alors … » (version 47)
+
+Un onglet **Automatisations** permet de décrire une règle en quelques choix, que le serveur applique seul. Exemple :
+*« Quand un film est vu dans Plex, avec une note d'au moins 7,5, copier sur le disque 1, puis envoyer sur 1fichier, la nuit à 02:30. »*
+Chaque règle se lit comme une phrase dans la liste, et le formulaire affiche cette même phrase pendant que tu le remplis.
+
+**Construction d'une règle (5 étapes).**
+
+1. **Quand** : un film est marqué « vu » dans Plex, ou un nouveau film apparaît dans tes dossiers sources.
+2. **Filtres (facultatifs)** : note minimale (note Plex) et genre (genres Plex). Un film sans note n'est pas retenu si un seuil de note est fixé.
+3. **Alors** : jusqu'à 6 actions, exécutées dans l'ordre (voir ci-dessous).
+4. **Quand l'exécuter** : *dès la détection*, ou *la nuit* à l'heure choisie (01:00 par défaut, comme la plage « Nuit »). La nuit, les films sont mis en file pendant la journée et traités à l'heure choisie, une fois par nuit.
+5. **Nom**.
+
+**Actions disponibles.**
+
+- **Copier sur un disque** : même chemin que la copie manuelle (nommage, espace libre, sous-dossier films).
+- **Déplacer sur un disque** : copie puis retrait de la source. Exige `ALLOW_DELETE` et une confirmation explicite.
+- **Envoyer sur 1fichier** : même envoi que l'onglet 1fichier. Après l'envoi, la copie locale est gardée, ou libérée (retrait de la source, avec `ALLOW_DELETE` et confirmation).
+- **Envoyer une notification** : via l'URL de notification (ntfy ou Discord), réglée dans Réglages › 1fichier ou par la variable `NOTIFY_URL`.
+
+**Garanties.**
+
+- Les films adultes sont toujours exclus, même si la session est déverrouillée.
+- À la création, les films déjà vus ou déjà présents ne sont pas traités, sauf si tu coches « Aussi les films déjà présents ou déjà vus ».
+- Chaque couple (action, film) n'est fait qu'une fois : relancer une règle ne refait pas une copie existante.
+- Un élément qui échoue est retenté jusqu'à 3 fois, puis abandonné et signalé dans l'historique.
+- Une règle ne contient qu'une action qui retire un fichier de sa source, et elle est toujours la dernière.
+- Une copie qui attend sa plage de transfert (Réglages › Plages de transfert) ne bloque ni la surveillance ni les autres règles. Une seule exécution tourne par règle à la fois.
+- En simulation (`DRY_RUN=true`), rien n'est mémorisé : la règle se rejoue pour de vrai quand la simulation est arrêtée.
+
+**Fonctionnement.** Le serveur relève les films toutes les 30 minutes (Plex est relu d'abord, pour que « vu » soit à jour), puis applique chaque règle active. Les règles et leur état sont enregistrés dans `workflows.json`, à côté de `settings.json` : elles survivent à un redémarrage, et les éléments en attente aussi. Chaque action laisse une ligne `AUTOMATISATION` dans le journal, et les 60 dernières entrées de l'historique (une par action exécutée) sont affichées dans l'onglet.
+
+**Limites.**
+
+- Seuls les films sont concernés pour l'instant. Séries et ebooks viendront dans une version suivante.
+- Le déclencheur « vu » dépend de Plex : Plex doit être configuré, et un « vu » est détecté au relevé suivant (30 minutes au plus).
+- Un film remis en « non vu » puis de nouveau « vu » déclenche la règle à nouveau, mais sa copie existante n'est pas refaite.
+- Après trois échecs, un élément est abandonné : il reste dans l'historique, et « Lancer maintenant » ne le retente pas.
+
+**Interface et API.** L'onglet permet de créer, modifier, mettre en pause, supprimer une règle, de la lancer tout de suite (« Lancer maintenant », sans attendre la nuit) et de lire l'historique. Les routes sont :
+
+- `GET /api/workflows` : règles, historique, catalogue et capacités du serveur (lecture libre) ;
+- `POST /api/workflows`, `PUT /api/workflows/{id}`, `DELETE /api/workflows/{id}` : protégées par `ACCESS_TOKEN` (section 37) ;
+- `POST /api/workflows/{id}/lancer` : exécution immédiate, en arrière-plan.
+
+Les règles invalides sont refusées avec un message clair (action indisponible, confirmation manquante, 1fichier ou notification non configurés, action qui retire un fichier placée avant une autre).
+
+**Vérification.** `backend/tests/test_v47_automatisations.py` contient 37 tests : déclenchement, absence de rétroactivité, filtres, essais, ordre des actions, simulation, nuit, validation, persistance, boucle, API et protection par jeton. Deux tests de bout en bout passent par les routes réelles : une copie réelle sur un disque, et un envoi 1fichier simulé (compression et réseau remplacés, index réel).

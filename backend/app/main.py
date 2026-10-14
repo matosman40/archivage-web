@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adult_auth, adult_media, config, disk_health, disk_integrity, disk_library, disk_meta, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb
+from . import adult_auth, adult_media, config, disk_health, disk_integrity, disk_library, disk_meta, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb, workflows
 from . import series as series_mod
 from .logs import log_action, read_log
 from .naming import guess_title_year
@@ -1896,6 +1896,126 @@ def ebook_cover_upload(req: EbookCoverUpload):
     log_action("OK", "JAQUETTE", f"{p} (import manuel)")
     server_url = f"/api/ebooks/cover?path={quote(p, safe='')}&v={int(time.time())}"
     return {"ok": True, "poster_url": poster if loc else server_url}
+
+
+# ---------------------------------------------------------------------
+# Automatisations (version 47) : règles « quand … alors … » sans intervention
+# ---------------------------------------------------------------------
+
+class WorkflowActionIn(BaseModel):
+    type: Literal["copier_disque", "deplacer_disque", "envoyer_1fichier", "notifier"]
+    destination: Optional[str] = Field(default=None, max_length=1024)  # racine du disque
+    apres: Literal["garder", "liberer"] = "garder"                     # 1fichier : copie locale gardée ou libérée
+    confirme: bool = False                                             # requis pour retirer un fichier de sa source
+
+
+class WorkflowIn(BaseModel):
+    nom: str = Field(min_length=1, max_length=80)
+    actif: bool = True
+    declencheur: Literal["plex_vu", "nouveau_film"]
+    note_min: Optional[float] = Field(default=None, ge=0, le=10)
+    genre: str = Field(default="", max_length=40)
+    inclure_deja_vus: bool = False
+    quand: Literal["immediat", "nuit"] = "immediat"
+    heure: str = Field(default="01:00", max_length=5)
+    actions: List[WorkflowActionIn] = Field(min_length=1, max_length=6)
+
+
+async def _lister_films_automatisation() -> list:
+    """Films à jour : Plex est relu d'abord (sinon « vu » serait périmé), puis les dossiers sources."""
+    if config.settings.plex_enabled:
+        await plex.refresh_cache()
+        scan_cache.invalidate(("films",))
+    items = await asyncio.to_thread(media.search_movies, "")
+    await asyncio.to_thread(_rapprocher_films, items)
+    return items
+
+
+async def _lancer_automatisation(action: dict, chemins: list) -> object:
+    """Crée la tâche d'une action par les mêmes routes que l'interface : mêmes contrôles, même comportement."""
+    if action["type"] == "envoyer_1fichier":
+        apres = "delete" if action.get("apres") == "liberer" else "keep"
+        req = OneFichierArchiveRequest(
+            paths=chemins, after=apres,
+            confirm_delete_text=config.settings.delete_confirm_text if apres == "delete" else None)
+        reponse = await onefichier_archive(req, unlocked=False)
+    else:
+        operation = "move" if action["type"] == "deplacer_disque" else "copy"
+        req = JobRequest(operation=operation, media_type="films", items=chemins,
+                         destination=action.get("destination"))
+        reponse = await create_job(req, unlocked=False)
+    job = jobs.get_job(reponse["job_id"])
+    if job is None:
+        raise RuntimeError("tâche introuvable après sa création")
+    return job
+
+
+async def _attendre_automatisation(job) -> int:
+    """Attend la fin de la tâche. Renvoie le nombre d'éléments en erreur."""
+    while job.status != "done":
+        await asyncio.sleep(2)
+    return sum(1 for e in job.events if e.get("type") == "item_error")
+
+
+workflows.configurer(lister=_lister_films_automatisation, lancer=_lancer_automatisation,
+                     attendre=_attendre_automatisation)
+
+
+def _lancer_en_fond(coroutine) -> None:
+    task = asyncio.ensure_future(coroutine)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+@app.on_event("startup")
+async def _demarrer_automatisations() -> None:
+    task = asyncio.create_task(workflows.boucle())
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
+@app.get("/api/workflows")
+def workflows_list():
+    return workflows.liste_publique()
+
+
+@app.post("/api/workflows", status_code=201)
+async def workflows_create(req: WorkflowIn):
+    try:
+        regle = workflows.creer(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    _lancer_en_fond(workflows.premier_releve(regle["id"]))  # mémorise l'existant tout de suite
+    return workflows.publique(regle)
+
+
+@app.put("/api/workflows/{regle_id}")
+def workflows_update(regle_id: str, req: WorkflowIn):
+    try:
+        regle = workflows.modifier(regle_id, req.model_dump())
+    except KeyError:
+        raise HTTPException(404, "Automatisation introuvable.")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return workflows.publique(regle)
+
+
+@app.delete("/api/workflows/{regle_id}")
+def workflows_delete(regle_id: str):
+    try:
+        workflows.supprimer(regle_id)
+    except KeyError:
+        raise HTTPException(404, "Automatisation introuvable.")
+    return {"ok": True}
+
+
+@app.post("/api/workflows/{regle_id}/lancer", status_code=202)
+async def workflows_run(regle_id: str):
+    """Exécute maintenant (sans attendre la nuit). Le résultat apparaît dans l'historique."""
+    if workflows.trouver(regle_id) is None:
+        raise HTTPException(404, "Automatisation introuvable.")
+    _lancer_en_fond(workflows.lancer_maintenant(regle_id))
+    return {"started": True}
 
 
 # ---------------------------------------------------------------------

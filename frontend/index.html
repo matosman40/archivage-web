@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v46">
+<link rel="stylesheet" href="style.css?v=20261014-v47">
 </head>
 <body>
 
@@ -50,6 +50,10 @@
     <button class="media-tab media-tab-disk" role="tab" data-media="disques" aria-selected="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>
       <span>Disques</span>
+    </button>
+    <button class="media-tab" role="tab" data-media="automatisations" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+      <span>Automatisations</span>
     </button>
   </nav>
 
@@ -237,6 +241,80 @@
   </div>
 
   <!-- ============================================================ -->
+  <section id="auto-view" class="of-view auto-view hidden" aria-label="Automatisations">
+    <header class="of-head">
+      <div class="of-head-text">
+        <span class="eyebrow">Sans intervention</span>
+        <h2>Automatisations</h2>
+        <p class="muted small">Des règles que le serveur applique seul : un film vu dans Plex est copié sur un disque, puis envoyé sur 1fichier, la nuit.</p>
+      </div>
+      <div class="of-head-actions">
+        <button id="auto-new-btn" class="btn btn-primary small" type="button">Nouvelle automatisation</button>
+      </div>
+    </header>
+
+    <p id="auto-notice" class="auto-notice hidden" role="note"></p>
+
+    <div id="auto-editor" class="auto-editor hidden" aria-labelledby="auto-editor-title">
+      <form id="auto-form" novalidate>
+        <div class="auto-editor-head">
+          <h3 id="auto-editor-title">Nouvelle automatisation</h3>
+          <p id="auto-preview" class="auto-preview" aria-live="polite"></p>
+        </div>
+
+        <fieldset class="auto-step">
+          <legend><span class="auto-num">1</span> Quand</legend>
+          <select id="auto-trigger" aria-label="Déclencheur"></select>
+          <p class="muted small">Pour Plex : Plex doit être configuré et son cache actualisé (Réglages).</p>
+        </fieldset>
+
+        <fieldset class="auto-step">
+          <legend><span class="auto-num">2</span> Filtres <span class="muted small">(facultatif)</span></legend>
+          <div class="auto-grid">
+            <label>Note minimale <input id="auto-note" type="number" min="0" max="10" step="0.5" placeholder="aucune"></label>
+            <label>Genre <input id="auto-genre" type="text" maxlength="40" placeholder="ex. Comédie"></label>
+          </div>
+          <label class="auto-check"><input id="auto-seen" type="checkbox"> Aussi les films déjà présents ou déjà vus (sinon, seuls les nouveaux cas comptent)</label>
+        </fieldset>
+
+        <fieldset class="auto-step">
+          <legend><span class="auto-num">3</span> Alors</legend>
+          <ol id="auto-actions" class="auto-actions" aria-label="Actions"></ol>
+          <button id="auto-add-action" class="btn btn-ghost small" type="button">+ Ajouter une action</button>
+          <p class="muted small">Les actions s'exécutent dans l'ordre. Une action qui retire le fichier de sa source se place en dernier.</p>
+        </fieldset>
+
+        <fieldset class="auto-step">
+          <legend><span class="auto-num">4</span> Quand l'exécuter</legend>
+          <div class="auto-grid">
+            <label>Moment <select id="auto-when"></select></label>
+            <label id="auto-time-wrap">Heure <input id="auto-time" type="time" value="01:00"></label>
+          </div>
+          <p class="muted small">La nuit, les films sont mis en file pendant la journée et traités à l'heure choisie. Les plages de transfert (Réglages) restent respectées.</p>
+        </fieldset>
+
+        <fieldset class="auto-step">
+          <legend><span class="auto-num">5</span> Nom</legend>
+          <input id="auto-name" type="text" maxlength="80" placeholder="ex. Films vus : disque puis 1fichier" autocomplete="off">
+        </fieldset>
+
+        <p id="auto-error" class="auto-error hidden" role="alert"></p>
+        <div class="auto-buttons">
+          <button id="auto-cancel" class="btn btn-ghost" type="button">Annuler</button>
+          <button id="auto-save" class="btn btn-primary" type="submit">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+
+    <ul id="auto-list" class="of-list" aria-label="Automatisations enregistrées"></ul>
+    <div id="auto-empty" class="empty hidden"></div>
+
+    <section class="auto-history" aria-labelledby="auto-history-title">
+      <h3 id="auto-history-title" class="of-section-title">Dernières exécutions</h3>
+      <ul id="auto-history" class="of-list" aria-label="Historique des automatisations"></ul>
+    </section>
+  </section>
+
   <section id="of-view" class="of-view hidden" aria-label="Bibliothèque 1fichier">
     <header class="of-head">
       <div class="of-head-text">
@@ -676,15 +754,16 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v46"></script>
-<script src="js/list.js?v=20261014-v46"></script>
-<script src="js/person.js?v=20261014-v46"></script>
-<script src="js/shell.js?v=20261014-v46"></script>
-<script src="js/onefichier.js?v=20261014-v46"></script>
-<script src="js/disks.js?v=20261014-v46"></script>
-<script src="js/identify.js?v=20261014-v46"></script>
-<script src="js/jobs.js?v=20261014-v46"></script>
-<script src="js/settings.js?v=20261014-v46"></script>
-<script src="js/app.js?v=20261014-v46"></script>
+<script src="js/core.js?v=20261014-v47"></script>
+<script src="js/list.js?v=20261014-v47"></script>
+<script src="js/person.js?v=20261014-v47"></script>
+<script src="js/shell.js?v=20261014-v47"></script>
+<script src="js/onefichier.js?v=20261014-v47"></script>
+<script src="js/automations.js?v=20261014-v47"></script>
+<script src="js/disks.js?v=20261014-v47"></script>
+<script src="js/identify.js?v=20261014-v47"></script>
+<script src="js/jobs.js?v=20261014-v47"></script>
+<script src="js/settings.js?v=20261014-v47"></script>
+<script src="js/app.js?v=20261014-v47"></script>
 </body>
 </html>
