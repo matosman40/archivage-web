@@ -283,6 +283,11 @@ sont alors lues depuis `settings.json` (volume `archivage-data`), pas depuis
 `.env` — `.env` n'est donc relu qu'au tout premier démarrage (tant que
 `settings.json` n'existe pas encore) ou après un clic sur "Réinitialiser".
 
+Variables de protection et de sécurité (lues au démarrage depuis `.env`, non éditables depuis l'interface) :
+- `ALLOW_DELETE` (`true` par défaut) : `false` interdit toute suppression (section 36).
+- `VERIFY_SHA256` (`true` par défaut) : `false` ne compare que les tailles (section 36).
+- `ACCESS_TOKEN` (vide par défaut) : jeton exigé pour toute modification, section 37.
+
 API correspondante, si tu veux scripter la configuration :
 - `GET /api/settings` — réglages actuels
 - `PUT /api/settings` — mise à jour partielle (seuls les champs fournis changent)
@@ -1837,10 +1842,9 @@ n'est pas possible par l'interface ; le test reproduisait une situation qu'aucun
 
 ### Limites connues, non corrigées
 
-- **Authentification des routes d'écriture.** Les réglages, les copies, les déplacements et les suppressions ne demandent
-  aucun identifiant, sauf les médias adultes (code d'accès). Qui peut joindre le serveur peut donc modifier les
-  réglages ou supprimer des fichiers. Il faut restreindre l'accès au réseau, ou ajouter un jeton ou une authentification
-  devant l'application (reverse proxy). C'est à décider avec toi.
+- **Authentification des routes d'écriture.** Par défaut, les réglages, les copies, les déplacements et les suppressions
+  ne demandent aucun identifiant, sauf les médias adultes (code d'accès). Depuis la version 46, un jeton `ACCESS_TOKEN`
+  peut protéger toute modification (section 37). Tant qu'il est vide, restreindre l'accès au réseau reste nécessaire.
 - **Copie identifiée par sa taille.** Une copie de même taille que la source est considérée comme déjà faite
   (`already_copied`), même si son contenu diffère. Un déplacement, lui, est protégé par une vérification SHA-256 avant de
   retirer la source. Vérifier le contenu de chaque copie coûterait une relecture complète des fichiers ; la date de
@@ -2011,8 +2015,9 @@ rétablir le comportement précédent des suppressions, rien à faire : `ALLOW_D
 - Une tâche en attente de plage ne peut pas être interrompue au milieu d'un fichier par une tâche plus prioritaire :
   la priorité joue entre deux éléments.
 - Les restaurations 1fichier ne sont pas reprises automatiquement après un redémarrage. Les envois le sont (section 37).
-- L'authentification des routes d'écriture reste à ajouter (section 33) : `ALLOW_DELETE=false` limite les dégâts,
-  mais ne remplace pas un contrôle d'accès.
+- L'authentification des routes d'écriture est désormais disponible par jeton (`ACCESS_TOKEN`, section 37). Elle est
+  désactivée par défaut, pour ne rien changer aux installations existantes. Sans jeton, restreindre l'accès au réseau
+  reste nécessaire.
 
 ## 37. Reprises après arrêt brutal : copies et envois 1fichier (version 46)
 
@@ -2063,3 +2068,30 @@ choix raisonnable, en connaissance du risque décrit en section 36.
 
 **Tests.** `backend/tests/test_v46_reprises.py` (13 tests) : temporaires rangés ou retirés, reprise réelle avec rsync,
 `--no-whole-file` seulement pour les tâches reprises, et les cas d'envoi 1fichier ci-dessus. Cinq mutations ont été essayées (retirer `--no-whole-file`, supprimer le temporaire au lieu de le ranger, désactiver la reprise d'envoi, ne pas persister les envois, ne pas noter le début du téléversement) : chacune fait échouer au moins un test. `test_v45_corrections.py` attend désormais le rangement du temporaire au lieu de sa suppression.
+
+**Interface (version 46).**
+- **Reprise visible.** Une tâche reprise après un redémarrage porte le badge « reprise après redémarrage » dans
+  sa carte. Le détail s'affiche en survol.
+- **Envoi retrouvé.** Un envoi 1fichier dont l'archive complète a été retrouvée après un arrêt est marqué « Sur 1fichier
+  (retrouvé après arrêt) ».
+- **Avertissement persistant.** Si un envoi repris repart de zéro parce qu'un fichier partiel peut subsister chez
+  1fichier, l'avertissement reste affiché sur l'entrée, dans la liste et dans la fiche. Il ne disparaît pas avec le journal.
+- **Bloc Protection (Réglages › Comportement).** Lecture seule : l'état réel de la suppression (`ALLOW_DELETE`), de la
+  vérification (`VERIFY_SHA256`) et du jeton (`ACCESS_TOKEN`). Il indique aussi si ce navigateur a le jeton, et permet
+  de le saisir ou de l'oublier.
+
+**Jeton d'accès (`ACCESS_TOKEN`).**
+- Vide (défaut) : rien ne change, comme avant.
+- Renseigné : toute modification sous `/api/` (POST, PUT, PATCH, DELETE) exige l'en-tête `X-Access-Token`. La lecture
+  reste ouverte. Sans jeton valide, le serveur répond 401 avec le code `token_required` ou `token_invalid`.
+- Quelques POST ne modifient rien et restent ouverts : la recherche (`/api/search`), les trois plans
+  (`/api/plan/films`, `/api/plan/ebooks`, `/api/plan/series`), le verrouillage et déverrouillage adulte
+  (`/api/adult/lock`, `/api/adult/unlock`) et le test du compte 1fichier (`/api/1fichier/test`). Tout le reste, y compris
+  l'export de l'index 1fichier chiffré, exige le jeton.
+- L'interface demande le jeton à la première modification, puis le garde dans ce navigateur (`localStorage`). Il n'est
+  jamais renvoyé par `GET /api/config` : cette route indique seulement si un jeton est exigé (`access_protected`).
+- Un jeton est partagé par toute l'installation : c'est une protection contre les appels non autorisés sur le réseau,
+  pas une gestion des comptes. Pour un accès depuis Internet, garde aussi un reverse-proxy avec HTTPS.
+
+**Intégration continue.** `.github/workflows/tests.yml` lance à chaque envoi : les tests du serveur avec rsync et 7z
+réels (aucun test n'est ignoré), pyflakes, la syntaxe JavaScript et la validation de `docker-compose.yml`.

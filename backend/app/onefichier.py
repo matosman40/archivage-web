@@ -1347,7 +1347,7 @@ def _lien_distant(match: dict) -> str:
     return url
 
 
-async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[str], key: str, folder: str) -> bool:
+async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[str], key: str, folder: str) -> tuple[bool, Optional[str]]:
     """Tâche reprise après un redémarrage (version 46) : traite l'entrée « en cours » laissée par l'arrêt.
     - Rien n'était parti vers 1fichier (arrêt pendant la compression ou la connexion) : l'entrée est retirée
       et l'envoi repart de zéro, avec un nouveau mot de passe.
@@ -1355,10 +1355,11 @@ async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[
       exacte de l'archive, l'envoi a abouti : il est enregistré comme retrouvé, sans nouvel envoi. Sinon, un
       fichier partiel peut subsister chez 1fichier : l'entrée est retirée, l'envoi repart de zéro, et un
       avertissement demande de vérifier le dossier. Si 1fichier ne répond pas, rien ne change.
-    Renvoie True si l'élément est déjà traité, False si l'envoi doit être refait par le chemin habituel."""
+    Renvoie (traité, avertissement) : traité = True si l'élément est déjà traité ; avertissement = message à garder
+    sur la nouvelle entrée quand l'envoi repart de zéro, pour qu'il reste visible dans l'interface."""
     entry = await asyncio.to_thread(_get_entry, key)
     if not entry or entry.get("status") != "pending":
-        return False
+        return False, None
     if not entry.get("reprise_suivie"):
         raise OneFichierError(
             "envoi interrompu avant la version 46 : son état n'est pas suivi. Vérifie 1fichier, puis retire "
@@ -1368,7 +1369,7 @@ async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[
         job.emit({"type": "item_log", "item": name,
                   "line": "Reprise : rien n'avait été envoyé avant l'arrêt, l'envoi repart de zéro."})
         log_action("REPRISE", "1FICHIER", f"{folder} : envoi relancé (rien n'avait été envoyé)")
-        return False
+        return False, None
 
     archive_size = entry.get("archive_size")
     folder_id = entry.get("folder_id")
@@ -1392,14 +1393,14 @@ async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[
             except Exception:
                 pass
         await _after_backup(job, name, unit, kind, show)
-        return True
+        return True, None
 
     await asyncio.to_thread(_release, key, entry["password"])
     message = (f"Envoi interrompu : le fichier {entry['archive_name']} n'est pas complet sur 1fichier. "
                f"L'envoi repart de zéro. Vérifie le dossier {folder} et supprime un éventuel fichier partiel de même nom.")
     job.emit({"type": "item_log", "item": name, "line": message})
     log_action("ALERTE", "1FICHIER", f"{folder} : {message}")
-    return False
+    return False, message
 
 
 async def _archive_one(job, item: str, name: str) -> None:
@@ -1460,15 +1461,19 @@ async def _archive_one(job, item: str, name: str) -> None:
     parent = os.path.dirname(unit)
     level = config.settings.onefichier_compression
     episodes = (await asyncio.to_thread(scan_pack, unit))["episodes"] if season is not None else None
+    avertissement = None
+    if getattr(job, "resumed", False):
+        traite, avertissement = await _reprendre_envoi(job, name, unit, kind, show, key, folder)
+        if traite:
+            return
     fields = {
         "kind": kind, "tmdb_id": ident["tmdb_id"], "title": ident["title"], "year": ident["year"],
         "original_name": base, "original_path": unit, "archive_name": archive_name_for(key, folder),
         "folder": folder, "source_size": size, "compression": level, "meta": ident["meta"],
         "adult": kind == KIND_FILM and adult_media.is_adult_path(unit),
         "show_name": os.path.basename(show) if show else None, "season": season, "episodes": episodes,
+        "notice": avertissement,
     }
-    if getattr(job, "resumed", False) and await _reprendre_envoi(job, name, unit, kind, show, key, folder):
-        return
     if not await asyncio.to_thread(_get_entry, key):
         # Un envoi commence : il attend une plage activée. Avant _claim, car une entrée « en cours »
         # ne doit pas exister pendant l'attente. Un élément déjà connu de l'index passe sans attendre.

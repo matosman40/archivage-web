@@ -220,11 +220,83 @@ document.addEventListener("error", (event) => {
   }
 }, true);
 
-async function api(path, options = {}) {
-  const resp = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+// Jeton d'accès (version 46) : demandé seulement si le serveur protège ses modifications (ACCESS_TOKEN).
+// Gardé dans ce navigateur (localStorage) ; en navigation privée, il ne reste que pour la page ouverte.
+const JETON_CLE = "archivage.jeton";
+let jetonMemoire = null;
+let demandeJeton = null;
+
+function jetonCourant() {
+  if (jetonMemoire !== null) return jetonMemoire;
+  try { return localStorage.getItem(JETON_CLE) || ""; } catch (_) { return ""; }
+}
+
+function enregistrerJeton(valeur) {
+  jetonMemoire = valeur || "";
+  try {
+    if (valeur) localStorage.setItem(JETON_CLE, valeur);
+    else localStorage.removeItem(JETON_CLE);
+  } catch (_) { /* stockage indisponible : le jeton reste en mémoire pour cette page */ }
+}
+
+function enTetesModification() {
+  const jeton = jetonCourant();
+  return jeton ? { "X-Access-Token": jeton } : {};
+}
+
+// Dialogue de saisie du jeton. Une seule demande à la fois, même si plusieurs modifications échouent.
+function demanderJeton(invalide = false) {
+  if (demandeJeton) return demandeJeton;
+  demandeJeton = new Promise((resolve) => {
+    const modal = $("token-modal");
+    const form = $("token-form");
+    const input = $("token-input");
+    const erreur = $("token-error");
+    const annuler = $("token-cancel");
+    erreur.textContent = invalide ? "Jeton incorrect. Réessaie." : "";
+    erreur.classList.toggle("hidden", !invalide);
+    input.value = "";
+    modal.classList.remove("hidden");
+    setTimeout(() => input.focus(), 0);
+    const fin = (valeur) => {
+      modal.classList.add("hidden");
+      form.removeEventListener("submit", onSubmit);
+      annuler.removeEventListener("click", onCancel);
+      demandeJeton = null;
+      resolve(valeur);
+    };
+    const onSubmit = (event) => {
+      event.preventDefault();
+      const valeur = input.value.trim();
+      if (valeur) fin(valeur);
+    };
+    const onCancel = () => fin(null);
+    form.addEventListener("submit", onSubmit);
+    annuler.addEventListener("click", onCancel);
+  });
+  return demandeJeton;
+}
+
+async function api(path, options = {}, tentative = 0) {
+  const { headers: entetes = {}, ...reste } = options;
+  const method = (reste.method || "GET").toUpperCase();
+  const headers = {
+    "Content-Type": "application/json",
+    ...(method === "GET" ? {} : enTetesModification()),
+    ...entetes,
+  };
+  const resp = await fetch(path, { ...reste, headers });
   let data = null;
   try { data = await resp.json(); } catch (_) { /* pas de corps JSON */ }
   if (!resp.ok) {
+    const jetonRefuse = resp.status === 401 && data && (data.code === "token_required" || data.code === "token_invalid");
+    if (jetonRefuse && tentative < 3) {
+      // Jeton absent ou refusé : on le redemande (jusqu'à trois essais) avec le motif.
+      const saisi = await demanderJeton(data.code === "token_invalid");
+      if (!saisi) throw new Error("Modification annulée : jeton d'accès requis (Réglages › Protection).");
+      enregistrerJeton(saisi);
+      return api(path, options, tentative + 1);
+    }
     const message = data && data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : `Erreur HTTP ${resp.status}`;
     throw new Error(message);
   }

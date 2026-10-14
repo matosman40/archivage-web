@@ -39,6 +39,7 @@ function ofStatus(e) {
   if (e.status !== "done") return { label: "Envoi incomplet", cls: "warn" };
   if (e.restored_at) return { label: "Restauré", cls: "info" };
   if (e.link_ok === false) return { label: "Lien introuvable", cls: "warn" };
+  if (e.recovered) return { label: "Sur 1fichier (retrouvé après arrêt)", cls: "ok" };
   return { label: "Sur 1fichier", cls: "ok" };
 }
 
@@ -202,6 +203,7 @@ function ofPendingRowHtml(e) {
         ${e.original_path ? `<div class="muted small">Source : <code>${esc(e.original_path)}</code></div>` : ""}
         <div class="of-chips"><span class="chip ${st.cls}">${esc(st.label)}</span></div>
         ${e.error ? `<p class="of-error small">${esc(e.error)}</p>` : ""}
+        ${e.notice ? `<p class="of-notice small" role="note">${esc(e.notice)}</p>` : ""}
       </div>
       <div class="of-actions">${actions}</div>
     </li>`;
@@ -526,6 +528,7 @@ function renderOfDetail(e, { keepScroll = false } = {}) {
           <h2 id="of-drawer-title">${esc(title)}</h2>
           <span class="sub">${subline}</span>
           <div class="chips">${chips}</div>
+          ${e.notice ? `<p class="of-notice small" role="note">${esc(e.notice)}</p>` : ""}
         </div>
       </div>
     </div>
@@ -769,7 +772,7 @@ async function exportOneFichierIndex() {
   try {
     const resp = await fetch("/api/1fichier/index/export", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...enTetesModification() },
       body: JSON.stringify({ passphrase: pass }),
     });
     if (!resp.ok) {

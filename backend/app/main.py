@@ -1,6 +1,7 @@
 """API web pour l'archivage de films/séries/ebooks — remplace les read -p du
 script bash par des endpoints HTTP/WebSocket appelés depuis le frontend."""
 import asyncio
+import hmac
 import os
 import shutil
 import time
@@ -164,6 +165,31 @@ def _size_of(path: str) -> int:
 # Config / méta
 # ---------------------------------------------------------------------
 
+# Jeton d'accès (version 46) : seules les modifications sont protégées. Désactivé si ACCESS_TOKEN est vide.
+_METHODES_MODIFICATION = {"POST", "PUT", "PATCH", "DELETE"}
+# Routes envoyées en POST sans rien modifier (recherche, plans, test du compte, code adulte en session) : elles restent
+# ouvertes. Toute autre route qui écrit, lance un traitement ou exporte des données est protégée.
+_POST_SANS_MODIFICATION = {
+    "/api/search", "/api/plan/films", "/api/plan/ebooks", "/api/plan/series",
+    "/api/adult/unlock", "/api/adult/lock", "/api/1fichier/test",
+}
+
+
+@app.middleware("http")
+async def _controle_jeton_d_acces(request: Request, call_next):
+    jeton = config.ACCESS_TOKEN
+    protegee = (request.method in _METHODES_MODIFICATION and request.url.path.startswith("/api/")
+                and request.url.path not in _POST_SANS_MODIFICATION)
+    if jeton and protegee:
+        fourni = request.headers.get("x-access-token", "")
+        if not fourni:
+            return JSONResponse({"detail": "Jeton d'accès requis pour modifier.", "code": "token_required"},
+                                status_code=401)
+        if not hmac.compare_digest(fourni.encode("utf-8"), jeton.encode("utf-8")):
+            return JSONResponse({"detail": "Jeton d'accès incorrect.", "code": "token_invalid"}, status_code=401)
+    return await call_next(request)
+
+
 @app.get("/api/config")
 def get_config():
     return {
@@ -181,6 +207,8 @@ def get_config():
         # Interrupteurs d'exploitation (version 45) et caractères refusés sur les disques, partagés avec l'interface.
         "allow_delete": config.ALLOW_DELETE,
         "verify_sha256": config.VERIFY_SHA256,
+        # Jeton d'accès (version 46) : la valeur n'est jamais renvoyée, seulement son existence.
+        "access_protected": bool(config.ACCESS_TOKEN),
         "forbidden_name_chars": "".join(sorted(_FORBIDDEN_NAME_CHARS)),
     }
 

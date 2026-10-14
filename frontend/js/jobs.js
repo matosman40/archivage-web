@@ -59,7 +59,7 @@ function dropAllJobCards() {
   recountRunningJobs();
 }
 
-function trackJob(jobId, operation, { live = false, alreadyDone = false, container = null, priority = "normal" } = {}) {
+function trackJob(jobId, operation, { live = false, alreadyDone = false, container = null, priority = "normal", resumed = false } = {}) {
   if (trackedJobs.has(jobId)) return;  // déjà affichée : pas de deuxième carte, pas de deuxième connexion
   const list = container || $("jobs-list");
   const emptyMsg = list.querySelector(".empty-msg");
@@ -70,6 +70,7 @@ function trackJob(jobId, operation, { live = false, alreadyDone = false, contain
   card.innerHTML = `
     <div class="job-card-header">
       <span class="job-op">${esc(OP_LABEL[operation] || operation)}</span>
+      ${resumed ? `<span class="chip warn job-resumed" title="Tâche reprise après un redémarrage du serveur : les éléments déjà traités sont passés, la copie partielle reprend là où elle s'était arrêtée.">reprise après redémarrage</span>` : ""}
       <span class="job-status">en cours…</span>
     </div>
     <div class="job-overall">
@@ -362,7 +363,7 @@ async function loadRecentJobs() {
     const data = await api("/api/jobs");
     const recent = [...data.jobs].reverse().slice(-8);
     for (const j of recent) {
-      trackJob(j.id, j.operation, { alreadyDone: j.status === "done", priority: j.priority || "normal" });
+      trackJob(j.id, j.operation, { alreadyDone: j.status === "done", priority: j.priority || "normal", resumed: !!j.resumed });
     }
   } catch (_) { /* non bloquant */ }
 }

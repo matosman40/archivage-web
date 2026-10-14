@@ -144,6 +144,7 @@ def list_jobs(hidden: frozenset = frozenset()) -> list[dict]:
             "priority": j.priority,
             "created_at": j.created_at,
             "item_count": len(j.items),
+            "resumed": j.resumed,
         }
         for j in sorted(JOBS.values(), key=lambda x: x.created_at, reverse=True)
         if j.id not in hidden

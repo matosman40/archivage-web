@@ -47,6 +47,9 @@ def _as_bool(value) -> bool:
 ALLOW_DELETE = _as_bool(os.environ.get("ALLOW_DELETE", "true"))
 # VERIFY_SHA256=false : la vérification après copie compare les tailles au lieu des empreintes SHA-256.
 VERIFY_SHA256 = _as_bool(os.environ.get("VERIFY_SHA256", "true"))
+# Jeton d'accès (version 46) : vide = aucune protection (comportement d'avant). S'il est renseigné, toute
+# modification (POST, PUT, PATCH, DELETE sous /api/) exige l'en-tête X-Access-Token. La lecture reste ouverte.
+ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "").strip()
 
 
 def _as_level(value) -> int:

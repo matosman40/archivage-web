@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v45">
+<link rel="stylesheet" href="style.css?v=20261014-v46">
 </head>
 <body>
 
@@ -544,6 +544,18 @@
 
     <fieldset>
       <legend>Comportement</legend>
+      <div class="protection-box" aria-live="polite">
+        <strong class="small">Protection (lecture seule, réglée dans le fichier .env)</strong>
+        <ul class="protection-list small">
+          <li id="prot-delete"></li>
+          <li id="prot-verify"></li>
+          <li id="prot-access"></li>
+        </ul>
+        <div class="path-check-row">
+          <button type="button" class="btn btn-ghost small hidden" id="prot-token-btn">Saisir le jeton d'accès</button>
+          <button type="button" class="btn btn-ghost small hidden" id="prot-token-forget">Oublier le jeton de ce navigateur</button>
+        </div>
+      </div>
       <label class="check-row"><input type="checkbox" id="set-dry-run"><span>Mode simulation (dry-run) : aucune écriture réelle</span></label>
             <div class="adult-access">
         <p id="adult-status" class="adult-status" aria-live="polite">Médias adultes : masqués.</p>
@@ -632,6 +644,19 @@
   </form>
 </div>
 
+<div id="token-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="token-title">
+  <form id="token-form" class="modal" autocomplete="off">
+    <h3 id="token-title">Jeton d'accès</h3>
+    <p class="muted small">Ce serveur protège ses modifications. Saisis le jeton défini dans ACCESS_TOKEN. Il reste enregistré dans ce navigateur seulement.</p>
+    <label class="field"><span>Jeton</span><input id="token-input" type="password" autocomplete="off" spellcheck="false"></label>
+    <p id="token-error" class="adult-error hidden" role="alert"></p>
+    <div class="modal-actions">
+      <button id="token-cancel" class="btn btn-ghost" type="button">Annuler</button>
+      <button id="token-ok" class="btn btn-primary" type="submit">Valider</button>
+    </div>
+  </form>
+</div>
+
 <div id="adult-code-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="adult-code-title">
   <form id="adult-code-form" class="modal" autocomplete="off">
     <h3 id="adult-code-title">Créer le code</h3>
@@ -651,15 +676,15 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v45"></script>
-<script src="js/list.js?v=20261014-v45"></script>
-<script src="js/person.js?v=20261014-v45"></script>
-<script src="js/shell.js?v=20261014-v45"></script>
-<script src="js/onefichier.js?v=20261014-v45"></script>
-<script src="js/disks.js?v=20261014-v45"></script>
-<script src="js/identify.js?v=20261014-v45"></script>
-<script src="js/jobs.js?v=20261014-v45"></script>
-<script src="js/settings.js?v=20261014-v45"></script>
-<script src="js/app.js?v=20261014-v45"></script>
+<script src="js/core.js?v=20261014-v46"></script>
+<script src="js/list.js?v=20261014-v46"></script>
+<script src="js/person.js?v=20261014-v46"></script>
+<script src="js/shell.js?v=20261014-v46"></script>
+<script src="js/onefichier.js?v=20261014-v46"></script>
+<script src="js/disks.js?v=20261014-v46"></script>
+<script src="js/identify.js?v=20261014-v46"></script>
+<script src="js/jobs.js?v=20261014-v46"></script>
+<script src="js/settings.js?v=20261014-v46"></script>
+<script src="js/app.js?v=20261014-v46"></script>
 </body>
 </html>

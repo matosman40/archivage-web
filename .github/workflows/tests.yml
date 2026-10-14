@@ -1,0 +1,49 @@
+# Vérifications à chaque envoi : tests du serveur (avec rsync et 7z réels), pyflakes, syntaxe du
+# frontend, et validation du fichier Compose. Aucun secret n'est nécessaire.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  serveur:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # comme l'image Docker (backend/Dockerfile, FROM python:3.12-slim)
+
+      - name: Outils système (rsync et 7z, pour les tests qui en ont besoin)
+        run: sudo apt-get update && sudo apt-get install -y rsync p7zip-full
+
+      - name: Dépendances Python
+        run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+
+      - name: Pyflakes
+        run: python -m pyflakes backend/app backend/tests
+
+      - name: Tests du serveur
+        working-directory: backend
+        run: python -m pytest -q tests
+
+  interface:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntaxe JavaScript
+        run: |
+          for f in frontend/js/*.js; do
+            node --check "$f"
+          done
+
+  compose:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validation de docker-compose.yml avec la configuration d'exemple
+        run: |
+          cp .env.example .env
+          docker compose config -q

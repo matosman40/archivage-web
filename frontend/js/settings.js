@@ -358,7 +358,27 @@ async function refreshDryRunFlag() {
       const el = document.getElementById(id);
       if (el) el.classList.toggle("hidden", sansSuppression);
     });
+    paintProtection(cfg);
   } catch (_) { /* ignore */ }
+}
+
+// Bloc « Protection » des Réglages (version 46) : lecture seule, pour savoir ce qui est réellement actif.
+function paintProtection(cfg) {
+  $("prot-delete").textContent = cfg.allow_delete === false
+    ? "Suppression : désactivée (ALLOW_DELETE=false). Aucun fichier ne peut être retiré de sa source."
+    : "Suppression : autorisée (ALLOW_DELETE=true).";
+  $("prot-verify").textContent = cfg.verify_sha256 === false
+    ? "Vérification des copies : tailles seulement (VERIFY_SHA256=false), plus rapide, moins sûre."
+    : "Vérification des copies : empreintes SHA-256 (recommandé).";
+  const protege = !!cfg.access_protected;
+  const avecJeton = protege && !!jetonCourant();
+  $("prot-access").textContent = protege
+    ? (avecJeton
+      ? "Modifications : protégées par un jeton (ACCESS_TOKEN). Ce navigateur a le jeton."
+      : "Modifications : protégées par un jeton (ACCESS_TOKEN). Ce navigateur n'a pas encore le jeton : il sera demandé à la première modification.")
+    : "Modifications : ouvertes à tout le réseau local (ACCESS_TOKEN vide). Définis ACCESS_TOKEN pour les protéger.";
+  $("prot-token-btn").classList.toggle("hidden", !protege);
+  $("prot-token-forget").classList.toggle("hidden", !avecJeton);
 }
 
 // ---------------------------------------------------------------------
@@ -652,6 +672,16 @@ function initAdult() {
   $("adult-unlock-cancel").addEventListener("click", closeAdultUnlock);
   $("adult-unlock-modal").addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.stopPropagation(); closeAdultUnlock(); }
+  });
+  $("prot-token-btn").addEventListener("click", async () => {
+    const saisi = await demanderJeton(false);
+    if (saisi) enregistrerJeton(saisi);
+    refreshDryRunFlag();
+  });
+  $("prot-token-forget").addEventListener("click", () => {
+    enregistrerJeton("");
+    refreshDryRunFlag();
+    toast("Jeton oublié dans ce navigateur.", "info");
   });
   $("adult-code-form").addEventListener("submit", submitAdultCode);
   $("adult-code-cancel").addEventListener("click", closeAdultCode);
