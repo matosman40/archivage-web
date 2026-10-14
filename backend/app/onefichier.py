@@ -281,7 +281,7 @@ def etat_fichier(entry: dict) -> Optional[str]:
         return None
     if entry.get("link_ok") is False:
         return "absent"
-    if entry.get("corrompu"):
+    if entry.get("corrompu") or entry.get("taille_ok") is False:
         return "corrompu"
     if entry.get("link_ok") is True:
         return "present"
@@ -1817,6 +1817,11 @@ async def check_entry(key: str) -> dict:
     match = next((f for f in listing if isinstance(f, dict) and f.get("filename") == entry["archive_name"]), None)
     link_ok = match is not None
     remote_date = str(match.get("date")) if match and match.get("date") not in (None, "") else None
+    # Version 50 : taille distante comparée à la taille enregistrée à l'envoi. Une différence signale
+    # une archive tronquée ou modifiée chez 1fichier. Sans taille (liste incomplète), rien n'est conclu.
+    taille_distante = int(match.get("size") or 0) if match else 0
+    taille_attendue = int(entry.get("remote_size") or entry.get("size") or 0)
+    taille_ok = (taille_distante == taille_attendue) if (link_ok and taille_distante and taille_attendue) else None
     checked_at = time.time()
 
     def fn(d):
@@ -1825,8 +1830,10 @@ async def check_entry(key: str) -> dict:
             raise OneFichierError("entrée modifiée entre-temps : rien n'a été changé.", 409)
         current.update(link_ok=link_ok, link_checked_at=checked_at,
                        uploaded_at=remote_date or current.get("uploaded_at"))
+        if taille_ok is not None:
+            current["taille_ok"] = taille_ok
         return {"link_ok": link_ok, "link_checked_at": checked_at,
-                "uploaded_at": current.get("uploaded_at")}
+                "uploaded_at": current.get("uploaded_at"), "taille_ok": taille_ok}
     result = await asyncio.to_thread(_update, fn)
     log_action("OK" if link_ok else "ALERTE", "1FICHIER",
                f"{folder_for(key)} : lien {'actif' if link_ok else 'introuvable'} (vérification)")
@@ -2144,6 +2151,8 @@ CHECK_HOUR = int(os.environ.get("ONEFICHIER_CHECK_HOUR", "3"))  # heure locale d
 CHECK_WEEKDAY = int(os.environ.get("ONEFICHIER_CHECK_WEEKDAY", "6"))  # jour : 0 = lundi … 6 = dimanche (version 50)
 CHECK_PAUSE = 1.0                      # secondes entre deux appels à 1fichier
 RESTORE_TEST_EVERY = 30 * 86400        # chaque élément est testé au plus une fois par mois
+# Nombre de tests de restauration à chaque contrôle (version 50). 1 par défaut : une archive par semaine.
+RESTORE_TESTS_PER_RUN = max(1, int(os.environ.get("ONEFICHIER_RESTORE_TESTS_PER_RUN", "1")))
 RESTORE_TEST_MAX_BYTES = 20 * 10**9    # test limité aux archives de 20 Go au plus (bande passante)
 _checks = {"running": False}
 
@@ -2241,12 +2250,12 @@ async def test_restore(key: str) -> dict:
     return result
 
 
-async def _pick_restore_test() -> Optional[str]:
+async def _pick_restore_test(exclus: frozenset = frozenset()) -> Optional[str]:
     """L'élément le moins récemment testé, parmi les archives assez petites et jamais testées depuis un mois."""
     now = time.time()
     candidates = []
     for key, e in _snapshot()["entries"].items():
-        if e.get("status") != "done" or key in _ACTIVE:
+        if e.get("status") != "done" or key in _ACTIVE or key in exclus:
             continue
         size = int(e.get("remote_size") or e.get("size") or 0)
         if size <= 0 or size > RESTORE_TEST_MAX_BYTES:
@@ -2264,7 +2273,7 @@ async def run_checks(trigger: str = "manuel") -> dict:
     if transfer_active():
         raise OneFichierError("un envoi ou une restauration est en cours : contrôles reportés.", 409)
     _checks["running"] = True
-    report = {"at": time.time(), "trigger": trigger, "links_ok": 0, "links_lost": [],
+    report = {"at": time.time(), "trigger": trigger, "links_ok": 0, "links_lost": [], "tailles_differentes": [],
               "errors": [], "tests": [], "dry_run": bool(config.settings.dry_run)}
     try:
         if config.settings.dry_run:
@@ -2279,15 +2288,21 @@ async def run_checks(trigger: str = "manuel") -> dict:
                         report["links_ok"] += 1
                     else:
                         report["links_lost"].append({"key": key, "folder": e.get("folder")})
+                    if result.get("taille_ok") is False:
+                        report["tailles_differentes"].append({"key": key, "folder": e.get("folder")})
                 except OneFichierError as exc:
                     report["errors"].append({"key": key, "error": str(exc)})
                 await asyncio.sleep(CHECK_PAUSE)
-            pick = await _pick_restore_test()
-            if pick and scheduler.active_window() is None:
-                # Le test télécharge une archive : il attend une plage (il sera retenté au prochain contrôle).
-                log_action("OK", "CONTROLE", f"{trigger} : test de restauration reporté (hors plage de transfert)")
-                pick = None
-            if pick:
+            choisis: set[str] = set()
+            for _ in range(RESTORE_TESTS_PER_RUN):
+                pick = await _pick_restore_test(frozenset(choisis))
+                if not pick:
+                    break
+                if scheduler.active_window() is None:
+                    # Le test télécharge une archive : il attend une plage (il sera retenté au prochain contrôle).
+                    log_action("OK", "CONTROLE", f"{trigger} : test de restauration reporté (hors plage de transfert)")
+                    break
+                choisis.add(pick)
                 test = await test_restore(pick)
                 report["tests"].append({"key": pick, "folder": test["folder"], "ok": test["ok"], "error": test["error"]})
     finally:
@@ -2295,13 +2310,16 @@ async def run_checks(trigger: str = "manuel") -> dict:
 
     await asyncio.to_thread(_update, lambda d: d.__setitem__("last_check_run", report))
     failed_tests = [t for t in report["tests"] if t["ok"] is not True]
-    if report["links_lost"] or report["errors"] or failed_tests:
+    if report["links_lost"] or report["errors"] or failed_tests or report["tailles_differentes"]:
         # La notification sort du serveur : un élément adulte n'y est désigné que par son numéro.
         adultes = _adult_keys()
         lines = []
         if report["links_lost"]:
             lines.append(f"{len(report['links_lost'])} lien(s) introuvable(s) : "
                          + ", ".join(_etiquette(x, adultes) for x in report["links_lost"]))
+        if report["tailles_differentes"]:
+            lines.append(f"{len(report['tailles_differentes'])} archive(s) de taille différente chez 1fichier : "
+                         + ", ".join(_etiquette(x, adultes) for x in report["tailles_differentes"]))
         if report["errors"]:
             lines.append(f"{len(report['errors'])} erreur(s) de contrôle (1fichier injoignable ?)")
         for t in failed_tests:

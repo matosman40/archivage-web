@@ -2223,7 +2223,7 @@ Les listes ne montrent plus un élément qui n'est plus là.
 
 **Limites.** Un disque débranché ne peut pas être vérifié : ses éléments connus restent affichés en lecture seule, comme avant. 
 
-**Vérification.** `backend/tests/test_v50_presents.py` contient 6 tests : suppression d'un film sur un disque connecté (même sans nouveau scan), disque débranché, recherche serveur qui masque un fichier disparu, états des envois 1fichier, contrôle hebdomadaire (jour et heure), et archive abîmée comptée comme erreur 1fichier.
+**Vérification.** `backend/tests/test_v50_presents.py` contient 8 tests : suppression d'un film sur un disque connecté (même sans nouveau scan), disque débranché, recherche serveur qui masque un fichier disparu, états des envois 1fichier, contrôle hebdomadaire (jour et heure), et archive abîmée comptée comme erreur 1fichier.
 
 ## 42. Vérification des fichiers 1fichier : absents et corrompus marqués (version 50)
 
@@ -2231,13 +2231,13 @@ Chaque envoi terminé porte un état, affiché dans l'onglet 1fichier :
 
 - **Présent** : le lien a été constaté au dernier contrôle.
 - **Absent de 1fichier** : l'archive n'est plus dans son dossier chez 1fichier (lien introuvable).
-- **Corrompu** : le dernier test de restauration a échoué sur l'archive elle-même : taille différente, empreinte SHA-256 différente, ou CRC 7z faux. Une erreur réseau pendant le test ne marque rien.
+- **Corrompu** : la taille distante ne correspond pas à la taille enregistrée à l'envoi (contrôle des liens), ou le dernier test de restauration a échoué sur l'archive elle-même (empreinte SHA-256 différente, ou CRC 7z faux). Une erreur réseau pendant le test ne marque rien.
 - **Non vérifié** : aucun contrôle n'a encore été fait.
 
-Les envois absents ou corrompus restent visibles, avec leur marque. Le filtre « Absents ou corrompus » de l'onglet les regroupe.
+Les envois absents ou corrompus restent visibles, avec leur marque. Le filtre « Absents ou corrompus » de l'onglet les regroupe, et l'en-tête affiche leur nombre.
 
 **Vérifier les fichiers.** Le bouton de l'onglet 1fichier lance le contrôle maintenant (tous les liens, puis un test de restauration) et attend sa fin. Le résultat s'affiche à la fin : nombre d'absents et de corrompus.
 
-**Contrôle hebdomadaire.** Le contrôle complet tourne chaque semaine (`ONEFICHIER_CHECK_WEEKDAY` : 0 = lundi … 6 = dimanche, 6 par défaut ; heure : `ONEFICHIER_CHECK_HOUR`). Il est reporté pendant un envoi ou une restauration. Un seul test de restauration par passage : chaque archive de 20 Go au plus est testée au plus une fois par mois.
+**Contrôle hebdomadaire.** Le contrôle complet tourne chaque semaine (`ONEFICHIER_CHECK_WEEKDAY` : 0 = lundi … 6 = dimanche, 6 par défaut ; heure : `ONEFICHIER_CHECK_HOUR`). Il est reporté pendant un envoi ou une restauration. Nombre de tests de restauration par passage : `ONEFICHIER_RESTORE_TESTS_PER_RUN` (1 par défaut). Chaque archive de 20 Go au plus est testée au plus une fois par mois, et jamais deux fois dans le même passage.
 
-**Limites.** La vérification de taille ne compare que l'archive présente au test : un fichier modifié chez 1fichier sans changer de taille n'est détecté que par le test de restauration, et seulement pour l'archive testée. Une archive de plus de 20 Go n'est pas testée automatiquement.
+**Limites.** La taille est comparée à chaque contrôle, mais une archive modifiée chez 1fichier sans changer de taille n'est détectée que par le test de restauration, et seulement pour les archives testées. Une archive de plus de 20 Go n'est pas testée automatiquement.
