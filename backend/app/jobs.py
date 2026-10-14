@@ -243,7 +243,8 @@ def _liberer_toutes_reservations(job: Job) -> None:
 # sa partie déjà transférée, un déplacement ne retire la source qu'après vérification.
 
 PENDING_FILE_NAME = "jobs-pending.json"
-PERSISTED_OPERATIONS = ("copy", "move", "delete")
+# Envois 1fichier compris (version 46) : un envoi interrompu est relancé au redémarrage.
+PERSISTED_OPERATIONS = ("copy", "move", "delete", "archive_1fichier")
 
 
 def pending_file() -> str:
@@ -264,6 +265,7 @@ def persist_pending() -> None:
             "dest_dirs": dict(j.dest_dirs),
             "priority": j.priority,
             "adult": j.adult,
+            "after": getattr(j, "after", "keep"),
         }
         for j in JOBS.values()
         if j.status != "done" and j.operation in PERSISTED_OPERATIONS
@@ -281,30 +283,57 @@ def persist_pending() -> None:
         log_action("ECHEC", "FILE", f"sauvegarde des tâches en attente impossible ({exc})")
 
 
-def _nettoyer_temporaires(job: Job) -> None:
-    """Après un arrêt BRUTAL (coupure, arrêt forcé), rsync laisse à destination un fichier caché
-    « .nom.XXXXXX » : le transfert n'a pas pu le ranger dans le dossier partiel. Ce fichier n'est jamais
-    pris pour un film (nom caché) ; il est retiré avant de relancer le transfert, qui repart de zéro."""
+# Fichier temporaire de rsync : « .nom.XXXXXX » (six caractères aléatoires) dans le dossier de destination.
+_TEMPORAIRE_RE = re.compile(r"^\.(?P<nom>.+)\.[A-Za-z0-9]{6}$")
+
+
+def _recuperer_temporaires(job: Job) -> None:
+    """Après un arrêt BRUTAL (coupure, SIGKILL), rsync laisse à destination un fichier caché « .nom.XXXXXX »
+    au lieu de le ranger dans le dossier partiel. Il contient le début de la copie, qui n'a donc pas à être
+    refaite : s'il n'existe pas encore de fichier final, il est rangé dans le dossier partiel, où la relance
+    le prend comme point de départ (voir « --no-whole-file » dans _transfert_verifie). Si le fichier final
+    existe déjà (fusion), le temporaire est retiré. Un fichier caché sans rapport n'est jamais touché."""
     for item in job.items:
         dest_dir = job.dest_dirs.get(item, job.destination)
         if not dest_dir:
             continue
-        prefixe = f".{job.dest_names.get(item) or _name(item)}."
-        try:
-            entrees = os.listdir(dest_dir)
-        except OSError:
-            continue
-        for entree in entrees:
-            # rsync : « .» + nom + « . » + six caractères aléatoires.
-            if not (entree.startswith(prefixe) and len(entree) == len(prefixe) + 6):
+        nom = job.dest_names.get(item) or _name(item)
+        dest_path = os.path.join(dest_dir, nom)
+        if os.path.isdir(dest_path) and not os.path.islink(dest_path):
+            # Dossier : les temporaires sont dans ses sous-dossiers, chacun avec son propre dossier partiel.
+            for root, _dirs, files in _walk(dest_path):
+                for entree in files:
+                    _traiter_temporaire(job, root, entree)
+        else:
+            try:
+                entrees = os.listdir(dest_dir)
+            except OSError:
                 continue
-            chemin = os.path.join(dest_dir, entree)
-            if os.path.isfile(chemin) and not os.path.islink(chemin):
-                try:
-                    os.remove(chemin)
-                    log_action("NETTOYAGE", job.operation.upper(), f"{chemin} (transfert interrompu brutalement)")
-                except OSError as exc:
-                    log_action("ECHEC", "NETTOYAGE", f"{chemin} ({exc})")
+            for entree in entrees:
+                m = _TEMPORAIRE_RE.match(entree)
+                if m and m.group("nom") == nom:
+                    _traiter_temporaire(job, dest_dir, entree)
+
+
+def _traiter_temporaire(job: Job, dossier: str, entree: str) -> None:
+    m = _TEMPORAIRE_RE.match(entree)
+    if not m:
+        return
+    chemin = os.path.join(dossier, entree)
+    if os.path.islink(chemin) or not os.path.isfile(chemin):
+        return
+    final = m.group("nom")
+    try:
+        if os.path.lexists(os.path.join(dossier, final)):
+            os.remove(chemin)
+            log_action("NETTOYAGE", job.operation.upper(), f"{chemin} (fichier final déjà présent)")
+            return
+        partiel = os.path.join(dossier, PARTIAL_DIR)
+        os.makedirs(partiel, exist_ok=True)
+        os.replace(chemin, os.path.join(partiel, final))
+        log_action("REPRISE", job.operation.upper(), f"{chemin} rangé pour reprise (arrêt brutal)")
+    except OSError as exc:
+        log_action("ECHEC", "REPRISE", f"{chemin} ({exc})")
 
 
 def restore_pending() -> list[Job]:
@@ -326,9 +355,11 @@ def restore_pending() -> list[Job]:
         except (KeyError, TypeError, ValueError):
             continue
         job.resumed = True
+        if job.operation == "archive_1fichier":
+            job.after = str(e.get("after") or "keep")
         JOBS[job.id] = job
         if job.operation in ("copy", "move"):
-            _nettoyer_temporaires(job)
+            _recuperer_temporaires(job)
         reserve_for_job(job)
         restored.append(job)
         log_action("REPRISE", job.operation.upper(),
@@ -857,6 +888,13 @@ async def _transfert_verifie(job: Job, item: str, dest_dir: str, dest_path: str,
         remplaces = _dossier_remplaces(job, dest_dir)
         if remplaces:
             base_cmd += ["--backup", f"--backup-dir={remplaces}"]
+    if job.resumed:
+        # Reprise après redémarrage (version 46) : rsync réutilise la partie déjà copiée (fichier partiel).
+        # En copie locale il faut --no-whole-file : sans lui, rsync renvoie le fichier entier (mesuré :
+        # 2 Go renvoyés pour 120 Mo réutilisables). Les copies normales gardent leurs options d'origine.
+        base_cmd.append("--no-whole-file")
+        job.emit({"type": "item_log", "item": name,
+                  "line": "Reprise après redémarrage : la partie déjà copiée est réutilisée si elle existe."})
     if not renamed:
         base_cmd += [item, dest_dir.rstrip("/") + "/"]
     elif os.path.isdir(item):

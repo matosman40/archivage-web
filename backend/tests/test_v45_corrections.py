@@ -383,13 +383,14 @@ def test_arret_propre_range_la_copie_partielle_et_la_relance_reprend(pret, monke
     assert relance.events[-1]["summary"]["ok"] == 1
 
 
-def test_reprise_retire_le_temporaire_laisse_par_un_arret_brutal(pret):
+def test_reprise_range_le_temporaire_laisse_par_un_arret_brutal(pret):
+    # Version 46 : le temporaire n'est plus supprimé mais rangé dans le dossier partiel (point de départ de la reprise).
     src = pret / "src" / "Film.mkv"
     src.parent.mkdir()
     src.write_bytes(b"x" * 100)
     dst = pret / "disque"
     dst.mkdir()
-    (dst / ".Film.mkv.Ab3dEf").write_bytes(b"partiel" * 100)  # reste d'un arrêt brutal
+    (dst / ".Film.mkv.Ab3dEf").write_bytes(b"x" * 60)  # reste d'un arrêt brutal : le début de la copie
     (dst / ".Autre.mkv.Ab3dEf").write_bytes(b"ne doit pas etre touche")  # fichier caché sans rapport
     jobs.create_job("copy", "films", [str(src)], destination=str(dst))
 
@@ -397,6 +398,7 @@ def test_reprise_retire_le_temporaire_laisse_par_un_arret_brutal(pret):
     jobs.restore_pending()
 
     assert not (dst / ".Film.mkv.Ab3dEf").exists()
+    assert (dst / jobs.PARTIAL_DIR / "Film.mkv").read_bytes() == b"x" * 60
     assert (dst / ".Autre.mkv.Ab3dEf").exists()
 
 

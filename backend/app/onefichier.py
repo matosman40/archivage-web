@@ -1187,6 +1187,10 @@ def _claim(key: str, fields: dict) -> tuple[Optional[dict], Optional[dict]]:
             "sha256": None,
             "local_copy": None,
             "local_copy_at": None,
+            # Version 46 : l'entrée suit le début de l'envoi, ce qui permet de la reprendre après un arrêt.
+            "reprise_suivie": True,
+            "archive_size": None,
+            "upload_started_at": None,
         }
         d["entries"][key] = entry
         return entry, None
@@ -1275,6 +1279,25 @@ def _set_folder_id(key: str, folder_id: int) -> None:
     _update(lambda d: d["entries"][key].__setitem__("folder_id", folder_id))
 
 
+def _set_archive_size(key: str, size: int) -> None:
+    _update(lambda d: d["entries"][key].__setitem__("archive_size", size))
+
+
+def _set_upload_started(key: str) -> None:
+    """Noté AVANT le premier octet envoyé : au redémarrage, un envoi noté ici peut avoir laissé un fichier."""
+    _update(lambda d: d["entries"][key].__setitem__("upload_started_at", time.time()))
+
+
+def _marquer_retrouvee(key: str, url: str, size: int) -> None:
+    def fn(d):
+        current = d["entries"].get(key)
+        if not current or current.get("status") != "pending":
+            raise OneFichierError("entrée modifiée entre-temps : rien n'a été changé.", 409)
+        current.update(status="done", url=url, remote_size=size, size=size,
+                       archived_at=time.time(), error=None, recovered=True)
+    _update(fn)
+
+
 async def _identify(job, kind: str, unit: str, name: str) -> dict:
     """Détermine la clé, le dossier 1fichier et le titre d'un élément."""
     if kind == KIND_FILM:
@@ -1314,8 +1337,78 @@ async def _identify(job, kind: str, unit: str, name: str) -> dict:
             "title": meta["title"] or name, "year": None, "meta": meta}
 
 
+def _lien_distant(match: dict) -> str:
+    url = str(match.get("url") or "")
+    if url and not url.startswith("http"):
+        url = f"https://1fichier.com/?{url}"
+    if not url:
+        raise OneFichierError("1fichier n'a pas renvoyé le lien du fichier.")
+    _check_host(url)
+    return url
+
+
+async def _reprendre_envoi(job, name: str, unit: str, kind: str, show: Optional[str], key: str, folder: str) -> bool:
+    """Tâche reprise après un redémarrage (version 46) : traite l'entrée « en cours » laissée par l'arrêt.
+    - Rien n'était parti vers 1fichier (arrêt pendant la compression ou la connexion) : l'entrée est retirée
+      et l'envoi repart de zéro, avec un nouveau mot de passe.
+    - Le téléversement avait commencé : 1fichier est interrogé. Si le fichier attendu est là, à la taille
+      exacte de l'archive, l'envoi a abouti : il est enregistré comme retrouvé, sans nouvel envoi. Sinon, un
+      fichier partiel peut subsister chez 1fichier : l'entrée est retirée, l'envoi repart de zéro, et un
+      avertissement demande de vérifier le dossier. Si 1fichier ne répond pas, rien ne change.
+    Renvoie True si l'élément est déjà traité, False si l'envoi doit être refait par le chemin habituel."""
+    entry = await asyncio.to_thread(_get_entry, key)
+    if not entry or entry.get("status") != "pending":
+        return False
+    if not entry.get("reprise_suivie"):
+        raise OneFichierError(
+            "envoi interrompu avant la version 46 : son état n'est pas suivi. Vérifie 1fichier, puis retire "
+            "l'entrée incomplète (Réglages › 1fichier) avant de relancer.")
+    if not entry.get("upload_started_at"):
+        await asyncio.to_thread(_release, key, entry["password"])
+        job.emit({"type": "item_log", "item": name,
+                  "line": "Reprise : rien n'avait été envoyé avant l'arrêt, l'envoi repart de zéro."})
+        log_action("REPRISE", "1FICHIER", f"{folder} : envoi relancé (rien n'avait été envoyé)")
+        return False
+
+    archive_size = entry.get("archive_size")
+    folder_id = entry.get("folder_id")
+    if not archive_size or folder_id is None:
+        raise OneFichierError(
+            "envoi interrompu sans taille ni dossier enregistrés : vérifie 1fichier avant de relancer.")
+    # Si 1fichier ne répond pas, l'exception fait échouer l'élément ; l'entrée reste en attente.
+    async with httpx.AsyncClient() as client:
+        data = await _call(client, "POST", "/file/ls.cgi", {"folder_id": int(folder_id)})
+    listing = data.get("files") or data.get("items") or []
+    match = next((f for f in listing if isinstance(f, dict) and f.get("filename") == entry["archive_name"]), None)
+    if match and int(match.get("size") or 0) == int(archive_size):
+        url = _lien_distant(match)
+        await asyncio.to_thread(_marquer_retrouvee, key, url, int(archive_size))
+        job.emit({"type": "item_log", "item": name,
+                  "line": "Envoi interrompu, mais 1fichier a reçu l'archive complète : enregistrée sans nouvel envoi."})
+        log_action("OK", "1FICHIER", f"{folder} : envoi interrompu retrouvé complet (reprise)")
+        if _has_tmdb(entry):
+            try:
+                await refresh_meta({key}, force=True)
+            except Exception:
+                pass
+        await _after_backup(job, name, unit, kind, show)
+        return True
+
+    await asyncio.to_thread(_release, key, entry["password"])
+    message = (f"Envoi interrompu : le fichier {entry['archive_name']} n'est pas complet sur 1fichier. "
+               f"L'envoi repart de zéro. Vérifie le dossier {folder} et supprime un éventuel fichier partiel de même nom.")
+    job.emit({"type": "item_log", "item": name, "line": message})
+    log_action("ALERTE", "1FICHIER", f"{folder} : {message}")
+    return False
+
+
 async def _archive_one(job, item: str, name: str) -> None:
     if not os.path.lexists(item):
+        if getattr(job, "resumed", False):
+            # Tâche reprise : la source a pu être retirée après un envoi réussi, avant l'arrêt.
+            job.emit({"type": "item_skipped", "item": name, "reason": "already_done",
+                      "message": "Source absente au redémarrage : sans doute déjà traitée avant l'arrêt (voir 1fichier)."})
+            return
         raise OneFichierError("source introuvable (déjà déplacée ou supprimée ?)")
     kind, unit = classify(item)
     show = season_show(unit) if kind == KIND_SERIE else None
@@ -1374,6 +1467,8 @@ async def _archive_one(job, item: str, name: str) -> None:
         "adult": kind == KIND_FILM and adult_media.is_adult_path(unit),
         "show_name": os.path.basename(show) if show else None, "season": season, "episodes": episodes,
     }
+    if getattr(job, "resumed", False) and await _reprendre_envoi(job, name, unit, kind, show, key, folder):
+        return
     if not await asyncio.to_thread(_get_entry, key):
         # Un envoi commence : il attend une plage activée. Avant _claim, car une entrée « en cours »
         # ne doit pas exister pendant l'attente. Un élément déjà connu de l'index passe sans attendre.
@@ -1418,6 +1513,7 @@ async def _archive_one(job, item: str, name: str) -> None:
         local_size = os.path.getsize(archive_path)
         if local_size > MAX_FILE_BYTES:
             raise OneFichierError("archive trop volumineuse pour 1fichier (plafond 300 Go)")
+        await asyncio.to_thread(_set_archive_size, key, local_size)
 
         async with httpx.AsyncClient() as client:
             if adult_media.is_adult_item(entry):  # film adulte : ADULTES/tmdb-<id>, pas la racine
@@ -1432,6 +1528,7 @@ async def _archive_one(job, item: str, name: str) -> None:
         async with httpx.AsyncClient() as client:
             node, upload_id = await _upload_server(client)  # aucun fichier transféré à cette étape
         upload_started = True  # à partir d'ici, des données peuvent être parties : on garde l'entrée en cas d'échec
+        await asyncio.to_thread(_set_upload_started, key)
         holder: dict = {}
         await _with_progress(
             job, name, local_size,

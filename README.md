@@ -1972,9 +1972,9 @@ Revue du moteur de copie, déplacement et suppression. Chaque point corrigé a u
   `<destination>/.archivage-remplaces/<id-de-tâche>/…` (dossier caché, ignoré par la bibliothèque disque), et
   l'interface indique combien de versions ont été gardées. Un déplacement en fusion ne fait plus disparaître
   l'ancienne version.
-- **Transfert interrompu.** Pendant le transfert, rsync écrit dans un fichier caché `.nom.XXXXXX`, jamais sous le nom final. Un arrêt propre range la copie partielle dans `.archivage-partiel/` (voir ci-dessous). Une coupure ou un disque plein ne laisse donc jamais un film tronqué que la bibliothèque prendrait pour complet. À la relance, rsync reprend depuis le dossier partiel, puis le supprime. Les restes partiels d'un disque ne sont pas recopiés vers le serveur.
+- **Transfert interrompu.** Pendant le transfert, rsync écrit dans un fichier caché `.nom.XXXXXX`, jamais sous le nom final. Un arrêt propre range la copie partielle dans `.archivage-partiel/` (voir ci-dessous). Une coupure ou un disque plein ne laisse donc jamais un film tronqué que la bibliothèque prendrait pour complet. À la relance, rsync est censé reprendre depuis le dossier partiel. **Constat corrigé en version 46** : en copie locale, sans `--no-whole-file`, rsync renvoyait le fichier entier. Voir la section 37.
 - **Arrêt du serveur.** Un arrêt propre (`docker compose stop`, SIGTERM) envoie SIGTERM à chaque rsync en cours : la copie partielle est rangée dans `.archivage-partiel/`, la tâche reste en attente, et la relance reprend. Aucun nouvel élément n'est commencé pendant l'arrêt.
-- **Arrêt brutal (coupure, arrêt forcé après le délai de grâce de Docker).** rsync ne peut plus ranger sa copie : un fichier caché `.nom.XXXXXX` reste à la destination. Il n'est jamais pris pour un film (nom caché) et n'est jamais porté au nom final. Au redémarrage, ce temporaire est retiré (journal : NETTOYAGE) et le transfert repart de zéro (journal : REPRISE).
+- **Arrêt brutal (coupure, arrêt forcé après le délai de grâce de Docker).** rsync ne peut plus ranger sa copie : un fichier caché `.nom.XXXXXX` reste à la destination. Il n'est jamais pris pour un film (nom caché) et n'est jamais porté au nom final. Au redémarrage, ce temporaire est rangé dans `.archivage-partiel/` et la copie reprend (version 46, section 37).
 - **Tâche urgente et plage horaire.** L'emplacement du disque n'est plus tenu pendant l'attente d'une plage :
   une tâche plus prioritaire passe. La priorité s'applique entre deux éléments, comme le décrit la section 22.
 - **Liens symboliques cassés.** Un lien est comparé à sa cible, et non plus à son contenu. Un lien cassé dans un
@@ -1986,7 +1986,7 @@ Revue du moteur de copie, déplacement et suppression. Chaque point corrigé a u
 - **Tâches en attente après un redémarrage.** Les copies, déplacements et suppressions non terminés sont écrits dans
   `jobs-pending.json` (à côté de `settings.json`, donc dans le volume `/data`) et reprennent au démarrage du
   serveur. Une tâche interrompue par l'arrêt reste dans ce fichier. Une tâche terminée en sort. Les envois 1fichier
-  ne sont pas concernés : leur état est déjà dans l'index.
+  sont repris aussi (section 37).
 - **Interrupteur de suppression : `ALLOW_DELETE`.** Variable d'environnement, valeur par défaut `true`.
   Avec `false`, aucun fichier ne peut être supprimé : ni la suppression, ni le déplacement (qui retire la source),
   ni la suppression sur disque, ni la suppression de la copie locale après un envoi 1fichier (« Libérer le serveur »). Les copies et les renommages restent possibles. Le contrôle est fait à la création
@@ -2008,9 +2008,58 @@ Revue du moteur de copie, déplacement et suppression. Chaque point corrigé a u
 rétablir le comportement précédent des suppressions, rien à faire : `ALLOW_DELETE` vaut `true` par défaut.
 
 **Limites connues, non corrigées.**
-- Après un arrêt brutal, la reprise repart de zéro (voir plus haut) : seul un arrêt propre conserve la copie partielle.
 - Une tâche en attente de plage ne peut pas être interrompue au milieu d'un fichier par une tâche plus prioritaire :
   la priorité joue entre deux éléments.
-- Les envois et restaurations 1fichier ne sont pas repris automatiquement après un redémarrage (voir plus haut).
+- Les restaurations 1fichier ne sont pas reprises automatiquement après un redémarrage. Les envois le sont (section 37).
 - L'authentification des routes d'écriture reste à ajouter (section 33) : `ALLOW_DELETE=false` limite les dégâts,
   mais ne remplace pas un contrôle d'accès.
+
+## 37. Reprises après arrêt brutal : copies et envois 1fichier (version 46)
+
+Suite des corrections de la section 36. Les points ci-dessous ont été vérifiés par des tests, pas seulement relus.
+
+**Correction d'une affirmation de la version 45.** La section 36 disait qu'à la relance rsync reprend depuis le
+dossier partiel. Ce n'était pas vrai en copie locale : rsync ne réutilise pas le fichier partiel par défaut et renvoie
+le fichier entier. Mesuré avec rsync 3.2.7 : un partiel de 120 Mo sur 2 Go, options d'origine → 2 Go renvoyés, 0 octet
+réutilisé ; avec `--no-whole-file` → 120 Mo réutilisés.
+
+**Copies après un arrêt brutal (SIGKILL, coupure).**
+- Le fichier caché `.nom.XXXXXX` laissé par rsync est rangé dans `.archivage-partiel/` (journal : REPRISE), au lieu
+  d'être supprimé. Si le fichier final existe déjà (fusion), le temporaire est retiré comme avant.
+- La relance d'une tâche reprise utilise `--no-whole-file` : rsync s'appuie sur la partie déjà copiée. Les copies
+  normales gardent leurs options d'origine.
+- Vérifié sur le serveur réel : copie de 300 Mo, arrêt brutal du groupe de processus alors que 23 Mo étaient copiés,
+  redémarrage. La copie reprend, le fichier final est identique à la source (cmp), et il ne reste ni temporaire, ni
+  partiel, ni processus rsync.
+
+**Envois 1fichier.** Un envoi interrompu par un arrêt est enregistré dans `jobs-pending.json` avec son mode
+d'après-envoi (`after`), et il est repris au démarrage. 1fichier ne permet pas de reprendre un téléversement : l'archive
+est donc recréée, puis réenvoyée si nécessaire. Au redémarrage, l'entrée « en cours » est traitée ainsi :
+- **Rien n'avait été envoyé** (arrêt pendant la compression ou la connexion) : l'entrée est retirée, et l'envoi repart
+  de zéro avec un nouveau mot de passe.
+- **Le téléversement avait commencé** : 1fichier est interrogé. Si le fichier attendu est là, à la taille exacte de
+  l'archive, l'envoi a abouti : il est enregistré comme « retrouvé », sans nouvel envoi, et le mode d'après-envoi
+  s'applique. Sinon, un fichier partiel peut subsister chez 1fichier : l'envoi repart de zéro, et le journal (ALERTE)
+  demande de vérifier le dossier et de supprimer un éventuel fichier partiel de même nom. Ce partiel n'est pas
+  supprimé automatiquement : l'application ne peut pas être sûre de distinguer un fichier partiel d'un fichier complet.
+- **1fichier ne répond pas** : rien ne change. L'élément échoue avec le message, et l'entrée reste en attente.
+- **Entrée créée avant la version 46** : son état n'est pas suivi, elle n'est pas reprise. Un message demande de
+  vérifier 1fichier et de retirer l'entrée.
+- **Source absente au redémarrage** (retirée après un envoi réussi, avant l'arrêt) : l'élément est signalé comme déjà
+  traité, sans erreur.
+
+**Mesure de la vérification SHA-256 (point 9 de la revue).** Fichier de 2 Go, sur le serveur de développement (disque
+virtio, rapide) : copie rsync 3,4 à 4,7 s ; vérification SHA-256 de la source et de la destination, cache vidé, 5 s ;
+vérification par tailles, moins de 1 ms. Sur un disque USB, la copie est limitée par le disque, et la vérification
+relit les deux fichiers : elle peut doubler ou plus le temps total. Sur un disque lent, `VERIFY_SHA256=false` est le
+choix raisonnable, en connaissance du risque décrit en section 36.
+
+**Limites.**
+- Les envois 1fichier ont été testés avec une simulation (compression, téléversement et réseau remplacés) : aucun test
+  ne contacte 1fichier. Un essai réel après mise en service reste à faire.
+- Un fichier partiel laissé chez 1fichier par un téléversement interrompu doit être supprimé à la main.
+- Les restaurations 1fichier ne sont pas reprises automatiquement.
+- Un envoi retrouvé chez 1fichier n'a plus d'archive locale : sa copie sur le disque de copie (Réglages) n'est pas refaite.
+
+**Tests.** `backend/tests/test_v46_reprises.py` (13 tests) : temporaires rangés ou retirés, reprise réelle avec rsync,
+`--no-whole-file` seulement pour les tâches reprises, et les cas d'envoi 1fichier ci-dessus. Cinq mutations ont été essayées (retirer `--no-whole-file`, supprimer le temporaire au lieu de le ranger, désactiver la reprise d'envoi, ne pas persister les envois, ne pas noter le début du téléversement) : chacune fait échouer au moins un test. `test_v45_corrections.py` attend désormais le rangement du temporaire au lieu de sa suppression.
