@@ -2212,3 +2212,15 @@ Quand on supprime un film ou une série du serveur ou d'un disque, on peut aussi
 **Limites.** Les ebooks ne sont pas concernés (ni Radarr ni Sonarr). La case est décochable à chaque suppression. Le retrait n'annule pas un téléchargement déjà en cours dans le client de téléchargement.
 
 **Vérification.** `backend/tests/test_v49_radarr_sonarr.py` contient 40 tests : validation de l'adresse, configuration et masquage de la clé, correspondance (TMDB, titre et année, ambiguïté, absence), retrait (paramètres `deleteFiles` et `addImportListExclusion`, fiche absente, erreur en cours de route), refus avant suppression, simulation, routes de test. La suite complète passe (465 tests). Dans Chromium, avec une fausse Radarr en HTTP : suppression sur disque et suppression du catalogue (case cochée : retrait, `deleteFiles=false`, `addImportListExclusion=true` ; case décochée : aucun retrait). Le parcours 1fichier n'a pas pu être joué (1fichier non configuré sur le serveur de test) ; il est couvert par les tests unitaires de la libération.
+
+## 41. Listes à jour : seuls les fichiers présents sont affichés (version 50)
+
+Les listes ne montrent plus un élément qui n'est plus là.
+
+- **Disques branchés** : à chaque réponse, un élément dont le fichier ou le dossier n'existe plus sur le disque est retiré de la liste, même si la copie enregistrée est plus récente que la suppression. Un « Rafraîchir » n'est donc plus nécessaire pour faire disparaître un fichier supprimé.
+- **Serveur (films, séries, ebooks)** : chaque recherche ne renvoie que les éléments dont le chemin existe encore. La liste en mémoire, ou la copie écrite au redémarrage, peut être en retard : elle n'est plus affichée telle quelle.
+- **1fichier** : n'apparaissent que les envois terminés dont le lien n'a pas été constaté perdu (`link_ok` n'est pas faux). Un envoi en cours reste visible, avec sa progression. Un envoi raté, ou un lien perdu, est masqué ; le nombre masqué est renvoyé dans la réponse (`absents_masques`).
+
+**Limites.** Un disque débranché ne peut pas être vérifié : ses éléments connus restent affichés en lecture seule, comme avant. Les envois 1fichier masqués ne sont pas listés nulle part ; pour les retrouver, il faut le journal ou les vérifications (section 37).
+
+**Vérification.** `backend/tests/test_v50_presents.py` contient 4 tests : suppression d'un film sur un disque connecté (même sans nouveau scan), disque débranché, recherche serveur qui masque un fichier disparu, et filtre des envois 1fichier (terminé, lien perdu, non constaté, raté, en cours).
