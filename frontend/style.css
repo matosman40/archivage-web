@@ -751,6 +751,7 @@ textarea { width: 100%; font-family: var(--mono); font-size: 12.5px; resize: ver
 }
 .of-badge.ok { color: #a6e8be; }
 .of-badge.warn { color: #f6d28a; }
+.of-badge.danger { color: #f7b3ad; }
 .of-badge.info { color: #b7d5f2; }
 
 /* étiquette « Adulte » (version 34) : visible seulement une fois le code saisi (version 36) */

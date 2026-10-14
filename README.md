@@ -431,11 +431,11 @@ Un export ne contient que les éléments présents au moment de l'export : expor
 
 **Contrôles automatiques et alertes (version 30)**
 
-- **Chaque nuit à `ONEFICHIER_CHECK_HOUR` (3 h par défaut)** : vérification de tous les liens (l'archive existe-t-elle
+- **Chaque semaine, le jour `ONEFICHIER_CHECK_WEEKDAY` à `ONEFICHIER_CHECK_HOUR`** (dimanche 3 h par défaut ; version 50) : vérification de tous les liens (l'archive existe-t-elle
   toujours dans son dossier ?), puis test de restauration d'un élément. Le test télécharge l'archive, vérifie son
   empreinte SHA-256 et son CRC 7z avec son mot de passe, puis supprime la copie temporaire. Rien n'est extrait.
   Un élément n'est testé qu'une fois par mois, et seulement si l'archive fait 20 Go au plus.
-- **Lancer maintenant** : bouton dans Réglages › 1fichier. Le résultat s'affiche sous l'état de l'index, et l'onglet 1fichier
+- **Lancer maintenant** : bouton « Vérifier les fichiers » dans l'onglet 1fichier, et « Lancer les contrôles maintenant » dans Réglages › 1fichier. Le résultat s'affiche sous l'état de l'index, et l'onglet 1fichier
   signale les liens introuvables.
 - **Alertes** : renseigne une URL ntfy (`https://ntfy.sh/ton-sujet`) ou un webhook Discord dans Réglages › 1fichier.
   Une alerte part en cas de lien introuvable, d'erreur de contrôle, de test de restauration échoué, ou de sauvegarde
@@ -2219,8 +2219,25 @@ Les listes ne montrent plus un élément qui n'est plus là.
 
 - **Disques branchés** : à chaque réponse, un élément dont le fichier ou le dossier n'existe plus sur le disque est retiré de la liste, même si la copie enregistrée est plus récente que la suppression. Un « Rafraîchir » n'est donc plus nécessaire pour faire disparaître un fichier supprimé.
 - **Serveur (films, séries, ebooks)** : chaque recherche ne renvoie que les éléments dont le chemin existe encore. La liste en mémoire, ou la copie écrite au redémarrage, peut être en retard : elle n'est plus affichée telle quelle.
-- **1fichier** : n'apparaissent que les envois terminés dont le lien n'a pas été constaté perdu (`link_ok` n'est pas faux). Un envoi en cours reste visible, avec sa progression. Un envoi raté, ou un lien perdu, est masqué ; le nombre masqué est renvoyé dans la réponse (`absents_masques`).
+- **1fichier** : aucun envoi n'est masqué. Chaque envoi porte son état (présent, absent, corrompu, non vérifié) : voir la section 42. Les envois absents ou corrompus restent affichés avec leur marque.
 
-**Limites.** Un disque débranché ne peut pas être vérifié : ses éléments connus restent affichés en lecture seule, comme avant. Les envois 1fichier masqués ne sont pas listés nulle part ; pour les retrouver, il faut le journal ou les vérifications (section 37).
+**Limites.** Un disque débranché ne peut pas être vérifié : ses éléments connus restent affichés en lecture seule, comme avant. 
 
-**Vérification.** `backend/tests/test_v50_presents.py` contient 4 tests : suppression d'un film sur un disque connecté (même sans nouveau scan), disque débranché, recherche serveur qui masque un fichier disparu, et filtre des envois 1fichier (terminé, lien perdu, non constaté, raté, en cours).
+**Vérification.** `backend/tests/test_v50_presents.py` contient 6 tests : suppression d'un film sur un disque connecté (même sans nouveau scan), disque débranché, recherche serveur qui masque un fichier disparu, états des envois 1fichier, contrôle hebdomadaire (jour et heure), et archive abîmée comptée comme erreur 1fichier.
+
+## 42. Vérification des fichiers 1fichier : absents et corrompus marqués (version 50)
+
+Chaque envoi terminé porte un état, affiché dans l'onglet 1fichier :
+
+- **Présent** : le lien a été constaté au dernier contrôle.
+- **Absent de 1fichier** : l'archive n'est plus dans son dossier chez 1fichier (lien introuvable).
+- **Corrompu** : le dernier test de restauration a échoué sur l'archive elle-même : taille différente, empreinte SHA-256 différente, ou CRC 7z faux. Une erreur réseau pendant le test ne marque rien.
+- **Non vérifié** : aucun contrôle n'a encore été fait.
+
+Les envois absents ou corrompus restent visibles, avec leur marque. Le filtre « Absents ou corrompus » de l'onglet les regroupe.
+
+**Vérifier les fichiers.** Le bouton de l'onglet 1fichier lance le contrôle maintenant (tous les liens, puis un test de restauration) et attend sa fin. Le résultat s'affiche à la fin : nombre d'absents et de corrompus.
+
+**Contrôle hebdomadaire.** Le contrôle complet tourne chaque semaine (`ONEFICHIER_CHECK_WEEKDAY` : 0 = lundi … 6 = dimanche, 6 par défaut ; heure : `ONEFICHIER_CHECK_HOUR`). Il est reporté pendant un envoi ou une restauration. Un seul test de restauration par passage : chaque archive de 20 Go au plus est testée au plus une fois par mois.
+
+**Limites.** La vérification de taille ne compare que l'archive présente au test : un fichier modifié chez 1fichier sans changer de taille n'est détecté que par le test de restauration, et seulement pour l'archive testée. Une archive de plus de 20 Go n'est pas testée automatiquement.

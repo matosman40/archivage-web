@@ -123,6 +123,7 @@ function bindEvents() {
     renderOfView();
   });
   $("of-refresh-meta").addEventListener("click", refreshOfMeta);
+  $("of-verify").addEventListener("click", verifyOfFiles);
   $("of-settings").addEventListener("click", openSettingsDrawer);
   $("of-view").addEventListener("click", onOfClick);
   $("of-drawer-body").addEventListener("click", onOfClick);

@@ -99,11 +99,14 @@ def config_settings():
 
 
 def test_prochain_controle_a_l_heure_prevue(env, monkeypatch):
+    # Version 50 : contrôle hebdomadaire (jour CHECK_WEEKDAY, heure CHECK_HOUR).
     monkeypatch.setattr(of, "CHECK_HOUR", 3)
+    monkeypatch.setattr(of, "CHECK_WEEKDAY", 6)
     now = time.time()
     nxt = of._next_run_at(now)
-    assert now < nxt <= now + 86400 + 60
+    assert now < nxt <= now + 7 * 86400 + 60
     assert time.localtime(nxt).tm_hour == 3
+    assert time.localtime(nxt).tm_wday == 6
 
 
 def test_mode_simulation_ne_fait_aucun_appel(env, monkeypatch):

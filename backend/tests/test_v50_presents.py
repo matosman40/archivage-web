@@ -56,12 +56,34 @@ def test_recherche_serveur_masque_les_fichiers_disparus(env, monkeypatch, tmp_pa
     assert [it["name"] for it in reponse["items"]] == ["Alpha (2001).mkv"]
 
 
-def test_envois_1fichier_ne_gardent_que_les_presents():
-    entrees = [
-        {"key": "a", "status": "done", "link_ok": True},
-        {"key": "b", "status": "done", "link_ok": False},      # lien perdu chez 1fichier
-        {"key": "c", "status": "done"},                         # pas encore constaté : présent
-        {"key": "d", "status": "error"},                        # envoi raté : pas sur 1fichier
-        {"key": "e", "status": "running", "active": True},      # en cours : reste visible
-    ]
-    assert [e["key"] for e in main._envois_presents(entrees)] == ["a", "c", "e"]
+def test_etat_des_envois_1fichier():
+    from app import onefichier
+    assert onefichier.etat_fichier({"status": "done", "link_ok": True}) == "present"
+    assert onefichier.etat_fichier({"status": "done", "link_ok": False}) == "absent"
+    assert onefichier.etat_fichier({"status": "done", "link_ok": True, "corrompu": True}) == "corrompu"
+    assert onefichier.etat_fichier({"status": "done"}) == "non_verifie"
+    assert onefichier.etat_fichier({"status": "error"}) is None
+
+
+def test_controle_hebdomadaire_tombe_le_jour_choisi(monkeypatch):
+    import time
+    from app import onefichier
+    monkeypatch.setattr(onefichier, "CHECK_HOUR", 3)
+    monkeypatch.setattr(onefichier, "CHECK_WEEKDAY", 6)  # dimanche
+    lundi_10h = time.mktime((2026, 10, 12, 10, 0, 0, 0, 0, -1))  # 12 octobre 2026 : lundi
+    suivant = time.localtime(onefichier._next_run_at(lundi_10h))
+    assert suivant.tm_wday == 6 and suivant.tm_hour == 3
+    assert (suivant.tm_mday, suivant.tm_mon) == (18, 10)
+    dimanche_1h = time.mktime((2026, 10, 18, 1, 0, 0, 0, 0, -1))
+    assert time.localtime(onefichier._next_run_at(dimanche_1h)).tm_mday == 18
+    dimanche_4h = time.mktime((2026, 10, 18, 4, 0, 0, 0, 0, -1))
+    assert time.localtime(onefichier._next_run_at(dimanche_4h)).tm_mday == 25
+
+
+def test_archive_abimee_compte_comme_erreur_1fichier(monkeypatch):
+    from types import SimpleNamespace
+    from app import onefichier
+    assert issubclass(onefichier.ArchiveCorrompue, onefichier.OneFichierError)
+    monkeypatch.setattr(onefichier, "_run_7z", lambda *a, **k: SimpleNamespace(returncode=2, stdout="", stderr="CRC error"))
+    with pytest.raises(onefichier.ArchiveCorrompue):
+        onefichier._7z_test("/nonexistent.7z", "x")

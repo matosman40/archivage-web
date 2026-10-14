@@ -38,7 +38,9 @@ function ofStatus(e) {
   if (e.active) return { label: "Envoi en cours", cls: "info" };
   if (e.status !== "done") return { label: "Envoi incomplet", cls: "warn" };
   if (e.restored_at) return { label: "Restauré", cls: "info" };
-  if (e.link_ok === false) return { label: "Lien introuvable", cls: "warn" };
+  // Marques de vérification (version 50) : absent ou corrompu, visibles sur la carte.
+  if (e.etat === "corrompu") return { label: "Corrompu", cls: "danger" };
+  if (e.etat === "absent") return { label: "Absent de 1fichier", cls: "danger" };
   if (e.recovered) return { label: "Sur 1fichier (retrouvé après arrêt)", cls: "ok" };
   return { label: "Sur 1fichier", cls: "ok" };
 }
@@ -61,6 +63,7 @@ function ofFiltered() {
     const m = ofMeta(e);
     if (kind !== "all" && ofKind(e) !== kind) return false;
     if (status === "restored" && !e.restored_at) return false;
+    if (status === "problemes" && e.etat !== "absent" && e.etat !== "corrompu") return false;
     if (genre && !(m.genres || []).includes(genre)) return false;
     if (!tmdbPass(tmdb, hasTmdb(ofKind(e), e.tmdb_id))) return false;
     if (q) {
@@ -598,12 +601,17 @@ function remoteDateLabel(e) {
   return "non vérifiée (bouton « Vérifier le lien »)";
 }
 
+// État d'un envoi (version 50) : présent, absent de 1fichier, corrompu (test de restauration en échec).
 function linkStatusHtml(e) {
+  if (e.etat === "corrompu") {
+    const detail = e.last_test_error ? ` · ${esc(e.last_test_error)}` : "";
+    return `<span class="chip danger">Corrompu</span> <span class="muted small">test de restauration du ${esc(fmtDateTime(e.last_test_at))}${detail}</span>`;
+  }
+  if (e.etat === "absent") {
+    return `<span class="chip danger">Absent de 1fichier</span> <span class="muted small">vérifié le ${esc(fmtDateTime(e.link_checked_at))}</span>`;
+  }
   if (e.link_ok === true) {
     return `<span class="chip ok">Actif</span> <span class="muted small">vérifié le ${esc(fmtDateTime(e.link_checked_at))}</span>`;
-  }
-  if (e.link_ok === false) {
-    return `<span class="chip warn">Introuvable sur 1fichier</span> <span class="muted small">vérifié le ${esc(fmtDateTime(e.link_checked_at))}</span>`;
   }
   return `<span class="chip">Non vérifié</span>`;
 }
@@ -664,6 +672,35 @@ async function forgetEntry(key) {
     await loadOneFichierView();
   } catch (err) {
     toast(err.message, "error");
+  }
+}
+
+// Vérification des fichiers (version 50) : lance le contrôle (liens et test de restauration), attend sa
+// fin en relisant l'état, puis affiche le résultat. Un seul suivi à la fois.
+let ofVerifying = false;
+async function verifyOfFiles() {
+  if (ofVerifying) return;
+  const btn = $("of-verify");
+  ofVerifying = true;
+  btn.disabled = true;
+  try {
+    const started = await api("/api/1fichier/checks/run", { method: "POST" });
+    if (!started.started) toast("Une vérification est déjà en cours.", "success");
+    else toast("Vérification des fichiers lancée.", "success");
+    for (let tour = 0; tour < 1200; tour++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const c = await api("/api/1fichier/checks/status");
+      if (!c.running) break;
+    }
+    await loadOneFichierView({ silent: true });
+    const absents = state.of.entries.filter((e) => e.etat === "absent").length;
+    const corrompus = state.of.entries.filter((e) => e.etat === "corrompu").length;
+    toast(`Vérification terminée : ${absents} absent(s), ${corrompus} corrompu(s).`, absents + corrompus ? "error" : "success");
+  } catch (err) {
+    toast(err.message, "error");
+  } finally {
+    ofVerifying = false;
+    btn.disabled = false;
   }
 }
 
