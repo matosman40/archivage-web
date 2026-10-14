@@ -277,6 +277,9 @@ def refresh(force: bool = False, names_on_1fichier: frozenset = frozenset(),
         items = {}
         metas = entry.get("meta") or {}
         for kind, lst in (entry.get("items") or {}).items():
+            if entry.get("connected"):
+                # Disque branché : seuls les éléments encore présents sont affichés (version 50).
+                lst = [it for it in lst if os.path.lexists(it["path"])]
             items[kind] = [{**it,
                             "on_1fichier": it.get("name") in names_on_1fichier,
                             "adult": kind == "films" and adult_media.is_adult_folder(it.get("folder")),
