@@ -4,12 +4,14 @@ Radarr et Sonarr sont simulés par un transport HTTP factice : on vérifie les a
 (clé API, paramètres de suppression), les correspondances, et qu'une erreur n'entraîne aucune
 suppression de fichier.
 """
+import asyncio
 import re
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from app import adult_auth, arr, config, disk_library, disks, identities, jobs, main
+from app import adult_auth, arr, config, disk_library, disks, identities, jobs, main, onefichier
 
 RADARR = "http://radarr.test:7878"
 SONARR = "http://sonarr.test:8989"
@@ -364,3 +366,52 @@ def test_reglages_enregistrent_les_adresses_et_gardent_les_cles_masquees(client,
     assert response.status_code == 200, response.text
     assert config.settings.radarr_url == "http://radarr.local:7878"
     assert config.settings.radarr_api_key == "CLE-RADARR-COMPLETE"  # la valeur masquée est ignorée
+
+
+# Libération de la copie locale après 1fichier (version 49) : la fiche est retirée seulement si demandé.
+
+def _liberation(faux, monkeypatch, *, retirer, kind="film", show=None, dry=False):
+    monkeypatch.setattr(config.settings, "dry_run", dry)
+    job = SimpleNamespace(retirer_arr=retirer)
+    return asyncio.run(onefichier._retirer_fiche_arr(job, "/x/Alpha (2001).mkv", kind, show))
+
+
+def test_liberation_sans_demande_ne_touche_pas_l_application(faux, monkeypatch):
+    assert _liberation(faux, monkeypatch, retirer=False) is None
+    assert faux.appels == []
+
+
+def test_liberation_demandee_retire_la_fiche(faux, monkeypatch):
+    assert _liberation(faux, monkeypatch, retirer=True) is None
+    assert ("DELETE", "/api/v3/movie/3", {"deleteFiles": "false", "addImportListExclusion": "true"}) in faux.appels
+
+
+def test_liberation_par_saison_ne_retire_rien(faux, monkeypatch):
+    assert _liberation(faux, monkeypatch, retirer=True, kind=onefichier.KIND_SERIE, show="/x/Serie") is None
+    assert not any(m == "DELETE" for m, _p, _q in faux.appels)
+
+
+def test_liberation_erreur_renvoie_un_message_sans_supprimer(faux, monkeypatch):
+    faux.code_delete = 500
+    message = _liberation(faux, monkeypatch, retirer=True)
+    assert message and "Radarr a répondu 500" in message
+    assert faux.films  # la fiche est toujours là
+
+
+def test_liberation_simulation_ne_retire_rien(faux, monkeypatch):
+    assert _liberation(faux, monkeypatch, retirer=True, dry=True) is None
+    assert not any(m == "DELETE" for m, _p, _q in faux.appels)
+
+
+def test_liberation_ebook_jamais_concerne(faux, monkeypatch):
+    assert _liberation(faux, monkeypatch, retirer=True, kind=onefichier.KIND_EBOOK) is None
+    assert faux.appels == []
+
+
+def test_automatisation_liberer_garde_le_choix_radarr(monkeypatch):
+    from app import workflows
+    coche = workflows._normaliser_action({"type": "envoyer_1fichier", "apres": "liberer", "confirme": True, "retirer_arr": True})
+    decoche = workflows._normaliser_action({"type": "envoyer_1fichier", "apres": "liberer", "confirme": True})
+    garde = workflows._normaliser_action({"type": "envoyer_1fichier", "apres": "garder", "retirer_arr": True})
+    assert coche["retirer_arr"] is True and decoche["retirer_arr"] is False
+    assert "retirer_arr" not in garde

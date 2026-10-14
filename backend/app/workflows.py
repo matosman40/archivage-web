@@ -160,6 +160,8 @@ def _normaliser_action(action: dict) -> dict:
         out["destination"] = os.path.normpath(brut) if brut else ""
     if kind == "envoyer_1fichier":
         out["apres"] = action.get("apres") or "garder"
+        if out["apres"] == "liberer":
+            out["retirer_arr"] = bool(action.get("retirer_arr"))  # version 49 : choix explicite, décoché par défaut
     if _retire_source(out):
         out["confirme"] = bool(action.get("confirme"))
     return out

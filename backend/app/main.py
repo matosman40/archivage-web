@@ -96,6 +96,7 @@ class OneFichierArchiveRequest(BaseModel):
     destination: Optional[str] = None
     confirm_delete_text: Optional[str] = None
     priority: Literal["urgent", "normal", "bas"] = "normal"
+    retirer_arr: bool = False  # libération de la copie locale : retirer aussi la fiche Radarr / Sonarr (version 49)
 
 
 class OneFichierRestoreRequest(BaseModel):
@@ -1183,6 +1184,7 @@ async def onefichier_archive(req: OneFichierArchiveRequest, unlocked: bool = Dep
                           destination=req.destination if after == "move" else None,
                           priority=req.priority, adult=adult_media.any_adult(units))
     job.after = after
+    job.retirer_arr = bool(req.retirer_arr) and after == "delete"
     _launch(job)
     return {"job_id": job.id}
 
@@ -1995,6 +1997,7 @@ class WorkflowActionIn(BaseModel):
     destination: Optional[str] = Field(default=None, max_length=1024)  # racine du disque
     apres: Literal["garder", "liberer"] = "garder"                     # 1fichier : copie locale gardée ou libérée
     confirme: bool = False                                             # requis pour retirer un fichier de sa source
+    retirer_arr: bool = False                                          # 1fichier, libération : retirer aussi la fiche Radarr / Sonarr (version 49)
 
 
 class WorkflowIn(BaseModel):
@@ -2025,7 +2028,8 @@ async def _lancer_automatisation(action: dict, chemins: list) -> object:
         apres = "delete" if action.get("apres") == "liberer" else "keep"
         req = OneFichierArchiveRequest(
             paths=chemins, after=apres,
-            confirm_delete_text=config.settings.delete_confirm_text if apres == "delete" else None)
+            confirm_delete_text=config.settings.delete_confirm_text if apres == "delete" else None,
+            retirer_arr=bool(action.get("retirer_arr")))
         reponse = await onefichier_archive(req, unlocked=False)
     else:
         operation = "move" if action["type"] == "deplacer_disque" else "copy"

@@ -249,7 +249,8 @@ async function runAction(operation, lot) {
     ? await loadSeasonGroups(plan.items)
     : null;
   // Suppression : proposer aussi de retirer la fiche de Radarr (films) ou Sonarr (séries), si configuré (version 49).
-  const arrLabel = operation === "delete" ? await arrLabelFor(state.mediaType) : null;
+  // Libération de la copie locale après 1fichier : même case (version 49), affichée seulement si « libérer » est choisi.
+  const arrLabel = operation === "delete" || archiveMode ? await arrLabelFor(state.mediaType) : null;
   const ok = await confirmAction(operation, destination, {
     archiveMode, count: plan.items.length, total: plan.total_size, seasonGroups, names: planNames(plan.items), arrLabel,
   });
@@ -260,6 +261,7 @@ async function runAction(operation, lot) {
     if (operation === "archive_1fichier") {
       const body = { paths: ok.paths || plan.items };
       if (ok.after && ok.after !== "keep") body.after = ok.after;
+      if (ok.after === "delete") body.retirer_arr = !!ok.arr;
       if (ok.after === "move") body.destination = destination;
       if (ok.after === "delete") body.confirm_delete_text = state.deleteConfirmText;
       data = await api("/api/1fichier/archive", { method: "POST", body: JSON.stringify(body) });
@@ -420,6 +422,9 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
     const currentAfter = () => (radios.find((r) => r.checked) || { value: "keep" }).value;
     const after = () => (showAfter ? currentAfter() : "keep");
     const needsText = () => operation === "delete" || (showAfter && after() === "delete");
+    // La case Radarr / Sonarr suit le choix « libérer » pour un envoi 1fichier (version 49).
+    // Par saisons, rien n'est retiré de Sonarr : la série reste suivie.
+    const arrShown = () => !!arrLabel && (operation === "delete" || (after() === "delete" && !seasonsOn()));
 
     afterBox.classList.toggle("hidden", !showAfter);
     radios.forEach((r) => { r.checked = r.value === "keep"; });
@@ -432,6 +437,7 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
       if (!text) input.value = "";
       seasonList.classList.toggle("hidden", !seasonsOn());
       namesBox.classList.toggle("hidden", seasonsOn() || names.length === 0);
+      $("confirm-arr-row").classList.toggle("hidden", !arrShown());
       okBtn.disabled = noneSelected() || (text && input.value.trim() !== state.deleteConfirmText);
       $("confirm-body").textContent = baseBody() + (showAfter ? afterText[after()] : (operation === "archive_1fichier" ? afterText.keep : ""))
         + (operation === "delete" || (!showAfter && needsText()) ? ` Tape ${state.deleteConfirmText} pour confirmer.` : "");
@@ -469,7 +475,7 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
       if (okBtn.disabled) return;
       const chosen = after();
       const paths = seasonsOn() ? selectedSeasons().map((b) => b.dataset.seasonPath) : null;
-      const arr = arrLabel ? $("confirm-arr").checked : false;
+      const arr = arrShown() ? $("confirm-arr").checked : false;
       cleanup();
       resolve({ confirmed: true, after: showAfter ? chosen : null, paths, arr });
     }

@@ -51,7 +51,7 @@ from urllib.parse import unquote
 
 import httpx
 
-from . import config, disk_library, disks, ebooks as ebooks_mod, identities, tmdb
+from . import arr, config, disk_library, disks, ebooks as ebooks_mod, identities, tmdb
 from . import adult_media, notify, scheduler, urlguard
 from .logs import log_action
 from .series import scan_pack, season_number
@@ -69,6 +69,8 @@ KIND_FILM = "film"
 KIND_SERIE = "serie"
 KIND_EBOOK = "ebook"
 KIND_NAMES = {KIND_FILM: "film", KIND_SERIE: "série", KIND_EBOOK: "ebook"}
+# Radarr (films) et Sonarr (séries) : fiche retirée quand la copie locale est libérée (version 49).
+ARR_MEDIA_BY_KIND = {KIND_FILM: "films", KIND_SERIE: "series"}
 # Clés d'index : identifiant TMDB brut (films), « tv:<id> » (série entière),
 # « tv:<id>:s<n> » (une saison d'une série), « book:<empreinte> » (ebooks)
 KEY_RE = re.compile(r"^(\d+|tv:\d+|tv:\d+:s\d{1,2}|book:[0-9a-f]{12})$")
@@ -1608,6 +1610,32 @@ def _disk_dest(kind: str, root: Optional[str], adult: bool = False) -> str:
     return os.path.join(root, _subdir_for(kind, adult))
 
 
+async def _retirer_fiche_arr(job, unit: str, kind: str, show: Optional[str]) -> Optional[str]:
+    """Retire la fiche Radarr/Sonarr de l'élément dont la copie locale est libérée, si la tâche le
+    demande (version 49). Renvoie un message d'erreur (la copie locale est alors gardée), ou None.
+    Une saison seule ne retire rien : la série reste suivie par Sonarr."""
+    if not getattr(job, "retirer_arr", False):
+        return None
+    media = ARR_MEDIA_BY_KIND.get(kind)
+    if not media or show is not None:
+        return None
+    try:
+        plan = await arr.preparer(media, [unit])
+        if not plan:
+            return None  # application non configurée pour ce type
+        if config.settings.dry_run:
+            for entry in plan:
+                log_action("SIMULE", "ARR", f"{entry['app']} : {entry['title']} ({entry['status']})")
+            return None
+        resultats = await arr.retirer(plan)
+    except arr.ArrError as exc:
+        return str(exc)
+    for r in resultats:
+        log_action("OK" if r["result"] == "retiré" else "INFO", "ARR",
+                   f"{r['app']} : {r['title']} ({r['result']}, fichiers conservés)")
+    return None
+
+
 async def _after_backup(job, name: str, unit: str, kind: str, show: Optional[str] = None) -> None:
     """Étape après une sauvegarde 1fichier vérifiée :
     - keep   : rien de plus (copie locale conservée) ;
@@ -1621,15 +1649,22 @@ async def _after_backup(job, name: str, unit: str, kind: str, show: Optional[str
     dry = config.settings.dry_run
     try:
         if mode == "delete":
+            if not dry and not config.ALLOW_DELETE:  # garde à l'exécution (version 45)
+                log_action("PARTIEL", "LIBERER", f"{unit} (sauvegardé sur 1fichier, suppression désactivée : ALLOW_DELETE=false)")
+                job.emit({"type": "item_partial", "item": name,
+                          "error": "Sauvegardé sur 1fichier, mais la copie locale n'a pas été supprimée (ALLOW_DELETE=false)."})
+                return
+            # Fiche Radarr / Sonarr retirée avant la copie locale : si cela échoue, la copie reste (version 49).
+            erreur_arr = await _retirer_fiche_arr(job, unit, kind, show)
+            if erreur_arr:
+                log_action("PARTIEL", "LIBERER", f"{unit} (sauvegardé sur 1fichier, fiche non retirée : {erreur_arr})")
+                job.emit({"type": "item_partial", "item": name,
+                          "error": f"Sauvegardé sur 1fichier, mais la fiche n'a pas pu être retirée de Radarr / Sonarr : {erreur_arr} La copie locale est conservée."})
+                return
             if dry:
                 log_action("SIMULE", "LIBERER", unit)
                 job.emit({"type": "item_log", "item": name, "line": "[dry-run] copie locale supprimée (simulé)"})
                 job.emit({"type": "item_done", "item": name})
-                return
-            if not config.ALLOW_DELETE:  # garde à l'exécution (version 45)
-                log_action("PARTIEL", "LIBERER", f"{unit} (sauvegardé sur 1fichier, suppression désactivée : ALLOW_DELETE=false)")
-                job.emit({"type": "item_partial", "item": name,
-                          "error": "Sauvegardé sur 1fichier, mais la copie locale n'a pas été supprimée (ALLOW_DELETE=false)."})
                 return
             from . import jobs as jobs_mod  # import tardif : jobs importe déjà onefichier
             try:

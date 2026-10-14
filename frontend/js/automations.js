@@ -196,6 +196,10 @@ function renderAutoActions() {
     const confirmation = autoRetiresSource(a)
       ? `<label class="auto-confirm"><input type="checkbox" data-auto-field="confirme"${a.confirme ? " checked" : ""}> Je confirme : le fichier sera retiré de sa source une fois l'action faite.</label>`
       : "";
+    // Libération après 1fichier : retirer aussi la fiche Radarr / Sonarr, décochée par défaut (version 49).
+    const retire = a.type === "envoyer_1fichier" && a.apres === "liberer"
+      ? `<label class="auto-confirm"><input type="checkbox" data-auto-field="retirer_arr"${a.retirer_arr ? " checked" : ""}> Retirer aussi la fiche Radarr / Sonarr (si configurées) : l'élément ne sera plus cherché ni téléchargé.</label>`
+      : "";
 
     return `
       <li class="auto-action" data-auto-index="${i}">
@@ -207,6 +211,7 @@ function renderAutoActions() {
           <button type="button" class="btn btn-ghost small" data-auto-remove aria-label="Retirer cette action"${actions.length === 1 ? " disabled" : ""}>×</button>
         </div>
         ${confirmation}
+        ${retire}
       </li>`;
   }).join("");
   $("auto-add-action").disabled = actions.length >= 6;
@@ -219,6 +224,7 @@ function lireActionsDom() {
     destination: li.querySelector('[data-auto-field="destination"]')?.value || "",
     apres: li.querySelector('[data-auto-field="apres"]')?.value || "garder",
     confirme: !!li.querySelector('[data-auto-field="confirme"]')?.checked,
+    retirer_arr: !!li.querySelector('[data-auto-field="retirer_arr"]')?.checked,
   }));
 }
 
@@ -239,6 +245,7 @@ function corpsDepuisFormulaire() {
       if (a.type === "copier_disque" || a.type === "deplacer_disque") out.destination = a.destination || "";
       if (a.type === "envoyer_1fichier") out.apres = a.apres || "garder";
       if (autoRetiresSource(out)) out.confirme = !!a.confirme;
+      if (a.type === "envoyer_1fichier" && out.apres === "liberer") out.retirer_arr = !!a.retirer_arr;
       return out;
     }),
   };

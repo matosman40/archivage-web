@@ -269,6 +269,7 @@ def persist_pending() -> None:
             "priority": j.priority,
             "adult": j.adult,
             "after": getattr(j, "after", "keep"),
+            "retirer_arr": bool(getattr(j, "retirer_arr", False)),
         }
         for j in JOBS.values()
         if j.status != "done" and j.operation in PERSISTED_OPERATIONS
@@ -360,6 +361,7 @@ def restore_pending() -> list[Job]:
         job.resumed = True
         if job.operation == "archive_1fichier":
             job.after = str(e.get("after") or "keep")
+            job.retirer_arr = bool(e.get("retirer_arr"))
         JOBS[job.id] = job
         if job.operation in ("copy", "move"):
             _recuperer_temporaires(job)
