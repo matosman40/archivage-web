@@ -146,7 +146,9 @@ function diskCardHtml(disk) {
   const active = state.disk.diskFilter === disk.path;
   const free = disk.connected && disk.free_bytes !== null && disk.free_bytes !== undefined
     ? ` · ${formatSize(disk.free_bytes)} libres` : "";
-  const seen = disk.connected ? "connecté" : `vu le ${fmtDate(disk.last_seen)}`;
+  const seen = disk.connected
+    ? (disk.scanned_at ? `connecté · contenu scanné le ${fmtDateTime(disk.scanned_at)}` : "connecté")
+    : `vu le ${fmtDate(disk.last_seen)}`;
   const badge = disk.connected
     ? `<span class="chip ok disk-live"><span class="disk-dot" aria-hidden="true"></span>Connecté</span>`
     : `<span class="chip">Hors ligne</span>`;
@@ -596,8 +598,8 @@ async function diskDelete() {
   const rows = diskSelectedRows();
   if (!rows.length) return;
   // Radarr (films) ou Sonarr (séries) : la fiche peut être retirée avec l'élément (version 49).
-  const label = await arrLabelFor(state.disk.kind);
-  const arr = label ? { label, checked: true } : null;
+  const info = await arrLabelFor(state.disk.kind);
+  const arr = info ? { ...info, checked: true } : null;
   const ok = await askConfirm({
     title: "Supprimer du disque",
     body: `${NF0.format(rows.length)} élément(s), ${formatSize(diskTotalSize(rows))}, seront supprimés définitivement du disque. Cette action est irréversible.`,

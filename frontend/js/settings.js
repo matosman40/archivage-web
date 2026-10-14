@@ -213,6 +213,7 @@ async function openSettingsDrawer() {
     $("set-sonarr-url").value = s.sonarr_url || "";
     $("set-sonarr-key").value = s.sonarr_api_key || "";
     $("set-sonarr-key").dataset.saved = s.sonarr_api_key || "";
+    $("set-arr-action").value = s.arr_action || "retirer";
     $("set-tmdb-key").value = s.tmdb_api_key || "";
     $("set-tmdb-key").dataset.saved = s.tmdb_api_key || "";
     $("set-tmdb-lang").value = s.tmdb_language || "fr-FR";
@@ -278,6 +279,7 @@ async function saveSettingsOnce() {
   if (plexToken !== $("set-plex-token").dataset.saved) patch.plex_token = plexToken;
   patch.radarr_url = $("set-radarr-url").value.trim();
   patch.sonarr_url = $("set-sonarr-url").value.trim();
+  patch.arr_action = $("set-arr-action").value;
   for (const app of ["radarr", "sonarr"]) {
     const cle = $(`set-${app}-key`).value.trim();
     if (cle !== $(`set-${app}-key`).dataset.saved) patch[`${app}_api_key`] = cle;

@@ -111,7 +111,8 @@ function countText() {
   const base = filtersActive() && n !== total
     ? `${NF0.format(n)} sur ${NF0.format(total)}`
     : `${NF0.format(n)} résultat${n > 1 ? "s" : ""}`;
-  return state.searchRefreshing ? `${base} · liste en cours d'actualisation…` : base;
+  const construite = state.searchBuiltAt ? ` · liste construite le ${fmtDateTime(state.searchBuiltAt)}` : "";
+  return `${base}${construite}${state.searchRefreshing ? " · en cours d'actualisation…" : ""}`;
 }
 
 function renderToolbar() {

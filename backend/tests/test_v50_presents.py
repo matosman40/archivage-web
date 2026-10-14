@@ -116,3 +116,101 @@ def test_un_seul_test_par_archive_dans_un_passage(env):
     autre = asyncio.run(onefichier._pick_restore_test(frozenset({premier})))
     assert premier in {"401", "402"} and autre in {"401", "402"} and autre != premier
     assert asyncio.run(onefichier._pick_restore_test(frozenset({"401", "402"}))) is None
+
+
+def test_renvoi_seulement_pour_une_archive_absente(env, tmp_path):
+    from app import onefichier
+    source = tmp_path / "Alpha (2001).mkv"
+    source.write_bytes(b"x")
+    onefichier._update(lambda d: d["entries"].update({
+        "501": {"kind": "film", "status": "done", "link_ok": False, "original_path": str(source), "folder": "tmdb-501"},
+        "502": {"kind": "film", "status": "done", "link_ok": True, "corrompu": True, "original_path": str(source), "folder": "tmdb-502"},
+        "503": {"kind": "film", "status": "done", "link_ok": False, "original_path": str(tmp_path / "absent.mkv"), "folder": "tmdb-503"},
+    }))
+    assert onefichier.preparer_renvoi("501") == str(source)
+    with pytest.raises(onefichier.OneFichierError):
+        onefichier.preparer_renvoi("502")  # archive corrompue encore présente : pas de renvoi
+    with pytest.raises(onefichier.OneFichierError):
+        onefichier.preparer_renvoi("503")  # copie locale disparue
+    onefichier.retirer_absent("501")
+    assert onefichier._get_entry("501") is None
+    with pytest.raises(onefichier.OneFichierError):
+        onefichier.retirer_absent("502")  # l'entrée n'est retirée que si elle est absente
+
+
+def test_historique_des_controles_garde_les_derniers(env):
+    from app import onefichier
+    for i in range(onefichier.HISTORY_MAX_CHECKS + 3):
+        onefichier._enregistrer_bilan({"at": float(i), "trigger": "manuel", "links_ok": i,
+                                       "links_lost": [], "errors": [], "tests": [{"ok": True}], "tailles_differentes": []})
+    historique = onefichier.checks_status()["history"]
+    assert len(historique) == onefichier.HISTORY_MAX_CHECKS
+    assert historique[0]["links_ok"] == onefichier.HISTORY_MAX_CHECKS + 2  # le plus récent d'abord
+    assert historique[0]["tests_ok"] == 1
+
+
+def test_route_renvoi_simulation_puis_envoi(env, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import main, onefichier
+    source = tmp_path / "Alpha (2001).mkv"
+    source.write_bytes(b"x")
+    onefichier._update(lambda d: d["entries"].update({
+        "601": {"kind": "film", "status": "done", "link_ok": False, "original_path": str(source), "folder": "tmdb-601"},
+    }))
+    client = TestClient(main.app)
+    monkeypatch.setattr(main.config.settings, "dry_run", True)
+    assert client.post("/api/1fichier/entries/601/resend").json() == {"ok": True, "dry_run": True}
+    assert onefichier._get_entry("601") is not None  # simulation : rien retiré
+
+    monkeypatch.setattr(main.config.settings, "dry_run", False)
+    envois = []
+
+    async def faux_envoi(req, unlocked=True):
+        envois.append(list(req.paths))
+        return {"ok": True}
+
+    monkeypatch.setattr(main, "onefichier_archive", faux_envoi)
+    assert client.post("/api/1fichier/entries/601/resend").status_code == 200
+    assert envois == [[str(source)]]
+    assert onefichier._get_entry("601") is None
+    assert client.post("/api/1fichier/entries/601/resend").status_code == 404  # plus rien à renvoyer
+
+
+def test_erreur_reseau_pendant_le_test_ne_marque_pas_l_archive(env, monkeypatch):
+    import asyncio
+    import httpx
+    from app import onefichier
+    onefichier._update(lambda d: d["entries"].update({"401": {
+        "kind": "film", "status": "done", "url": "https://1fichier.com/?a401", "password": "PW401-XXXXXXXXXX",
+        "archive_name": "tmdb-401.7z", "folder": "tmdb-401", "remote_size": 1000, "size": 1000, "corrompu": False}}))
+
+    async def panne(client, url):
+        raise httpx.ConnectError("réseau coupé")
+
+    monkeypatch.setattr(onefichier, "_download_url", panne)
+    asyncio.run(onefichier.test_restore("401"))
+    entry = onefichier._get_entry("401")
+    assert entry["last_test_ok"] is False
+    assert not entry.get("corrompu")  # une panne réseau ne dit rien de l'archive
+
+
+def test_test_reussi_leve_la_marque_corrompu(env, monkeypatch):
+    import asyncio
+    from app import onefichier
+    onefichier._update(lambda d: d["entries"].update({"402": {
+        "kind": "film", "status": "done", "url": "https://1fichier.com/?a402", "password": "PW402-XXXXXXXXXX",
+        "archive_name": "tmdb-402.7z", "folder": "tmdb-402", "remote_size": 1000, "size": 1000, "corrompu": True}}))
+
+    async def lien(client, url):
+        return "https://example.invalid/direct"
+
+    def ecrit(direct, archive, holder):
+        with open(archive, "wb") as fh:
+            fh.write(b"x" * 1000)
+
+    monkeypatch.setattr(onefichier, "_download_url", lien)
+    monkeypatch.setattr(onefichier, "_download_blocking", ecrit)
+    monkeypatch.setattr(onefichier, "_7z_test", lambda *a, **k: None)
+    resultat = asyncio.run(onefichier.test_restore("402"))
+    assert resultat["ok"] is True
+    assert onefichier._get_entry("402")["corrompu"] is False

@@ -331,6 +331,38 @@ def export_index(passphrase: str) -> tuple[str, str]:
     return archive, name
 
 
+def preparer_renvoi(key: str) -> str:
+    """Contrôles avant un renvoi (version 50) : seule une archive ABSENTE de 1fichier peut être renvoyée
+    (son nom distant est libre). Une archive corrompue encore présente chez 1fichier ne se renvoie pas :
+    elle doit être supprimée à la main chez 1fichier, sinon le nouveau fichier porterait le même nom.
+    Renvoie le chemin de la copie locale, source du renvoi."""
+    if key in _ACTIVE:
+        raise OneFichierError("envoi en cours : attends la fin de l'opération.", 409)
+    entry = _get_entry(key)
+    if not entry:
+        raise OneFichierError("entrée introuvable", 404)
+    if entry.get("status") != "done":
+        raise OneFichierError("seul un envoi terminé peut être renvoyé.", 409)
+    if entry.get("link_ok") is not False:
+        raise OneFichierError("seule une archive absente de 1fichier peut être renvoyée : vérifie d'abord le lien.", 409)
+    source = entry.get("original_path")
+    if not source or not os.path.lexists(source):
+        raise OneFichierError("copie locale introuvable : le renvoi est impossible.", 409)
+    if not is_configured():
+        raise OneFichierError("clé API 1fichier non renseignée (Réglages › 1fichier).", 400)
+    return source
+
+
+def retirer_absent(key: str) -> None:
+    """Retire l'entrée d'une archive absente pour pouvoir la renvoyer. Vérifié à nouveau sous verrou."""
+    def fn(d):
+        entry = d["entries"].get(key)
+        if not entry or entry.get("status") != "done" or entry.get("link_ok") is not False:
+            raise OneFichierError("l'état de cet envoi a changé : rien n'a été fait, rafraîchis la liste.", 409)
+        del d["entries"][key]
+    _update(fn)
+
+
 def forget_pending(key: str) -> None:
     """Retire de l'index un envoi resté incomplet. Un envoi terminé n'est
     jamais retirable ici : son mot de passe est la seule clé de son archive."""
@@ -1637,7 +1669,10 @@ async def _retirer_fiche_arr(job, unit: str, kind: str, show: Optional[str]) -> 
     if not getattr(job, "retirer_arr", False):
         return None
     media = ARR_MEDIA_BY_KIND.get(kind)
-    if not media or show is not None:
+    if media and show is not None:
+        log_action("INFO", "ARR", f"{unit} : envoi par saison, la série reste suivie par Sonarr")
+        return None
+    if not media:
         return None
     try:
         plan = await arr.preparer(media, [unit])
@@ -2180,6 +2215,31 @@ def _etiquette(item: dict, adultes: set[str]) -> str:
     return str(item.get("folder") or item.get("key") or "")
 
 
+HISTORY_MAX_CHECKS = 20
+
+
+def _bilan_resume(report: dict) -> dict:
+    tests = report.get("tests") or []
+    return {
+        "at": report.get("at"), "trigger": report.get("trigger"),
+        "links_ok": report.get("links_ok", 0), "absents": len(report.get("links_lost") or []),
+        "tailles_differentes": len(report.get("tailles_differentes") or []),
+        "errors": len(report.get("errors") or []),
+        "tests_ok": sum(1 for t in tests if t.get("ok") is True),
+        "tests_echoues": sum(1 for t in tests if t.get("ok") is False),
+    }
+
+
+def _enregistrer_bilan(report: dict) -> None:
+    """Garde le dernier contrôle complet et l'historique des derniers (version 50)."""
+    def fn(d):
+        d["last_check_run"] = report
+        historique = list(d.get("check_history") or [])
+        historique.append(_bilan_resume(report))
+        d["check_history"] = historique[-HISTORY_MAX_CHECKS:]
+    _update(fn)
+
+
 def checks_status(unlocked: bool = True) -> dict:
     """État des contrôles. Sans session, les résultats des envois adultes sont retirés de la dernière
     passe (leur clé et leur dossier révéleraient le titre)."""
@@ -2191,6 +2251,7 @@ def checks_status(unlocked: bool = True) -> dict:
     return {
         "running": _checks["running"],
         "last_run": last,
+        "history": list(reversed(_snapshot().get("check_history") or [])),
         "next_run_at": _next_run_at() if is_configured() else None,
     }
 
@@ -2308,8 +2369,13 @@ async def run_checks(trigger: str = "manuel") -> dict:
     finally:
         _checks["running"] = False
 
-    await asyncio.to_thread(_update, lambda d: d.__setitem__("last_check_run", report))
+    await asyncio.to_thread(_enregistrer_bilan, report)
     failed_tests = [t for t in report["tests"] if t["ok"] is not True]
+    if trigger == "planifié" and not (report["links_lost"] or report["errors"] or failed_tests or report["tailles_differentes"]):
+        # Version 50 : un bilan hebdomadaire part aussi quand tout va bien, pour savoir que le contrôle a tourné.
+        await notify.send("1fichier : contrôle hebdomadaire OK",
+                          f"{report['links_ok']} lien(s) vérifié(s), {len(report['tests'])} test(s) de restauration "
+                          f"réussi(s) : {sum(1 for t in report['tests'] if t['ok'] is True)}.")
     if report["links_lost"] or report["errors"] or failed_tests or report["tailles_differentes"]:
         # La notification sort du serveur : un élément adulte n'y est désigné que par son numéro.
         adultes = _adult_keys()

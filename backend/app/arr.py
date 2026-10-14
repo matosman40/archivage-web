@@ -56,11 +56,14 @@ def kind_for_media(media_type: str) -> Optional[str]:
 
 
 def status() -> dict:
-    """Présence de la configuration, sans aucun secret."""
-    return {kind: {"label": app["label"], "configured": configured(kind)} for kind, app in APPS.items()}
+    """Présence de la configuration (sans aucun secret) et action choisie (version 50)."""
+    action = getattr(config.settings, "arr_action", "retirer") or "retirer"
+    return {kind: {"label": app["label"], "configured": configured(kind), "action": action}
+            for kind, app in APPS.items()}
 
 
-async def _request(kind: str, method: str, path: str, params: Optional[dict] = None) -> httpx.Response:
+async def _request(kind: str, method: str, path: str, params: Optional[dict] = None,
+                   body: Optional[dict] = None) -> httpx.Response:
     label = APPS[kind]["label"]
     url, key = _cfg(kind)
     if not url or not key:
@@ -69,7 +72,7 @@ async def _request(kind: str, method: str, path: str, params: Optional[dict] = N
         raise ArrError(f"L'adresse de {label} doit commencer par http:// ou https://.", 400)
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            return await client.request(method, f"{url}/api/v3/{path}", params=params,
+            return await client.request(method, f"{url}/api/v3/{path}", params=params, json=body,
                                         headers={"X-Api-Key": key})
     except httpx.HTTPError:
         # Le message httpx peut contenir l'adresse : on n'en renvoie qu'un texte générique.
@@ -163,14 +166,42 @@ async def preparer(media_type: str, items: list[str], metas: Optional[dict] = No
     return plan
 
 
+async def _desactiver(kind: str, entry: dict) -> str:
+    """Désactive la fiche (ne plus la chercher) sans la retirer de l'application (version 50)."""
+    chemin = f"{APPS[kind]['path']}/{entry['id']}"
+    resp = await _request(kind, "GET", chemin)
+    if resp.status_code == 404:
+        return "absent"
+    _check(kind, resp)
+    fiche = resp.json()
+    if fiche.get("monitored") is False:
+        return "désactivé"  # déjà désactivée : rien à faire
+    fiche["monitored"] = False
+    resp = await _request(kind, "PUT", chemin, body=fiche)
+    if resp.status_code == 404:
+        return "absent"
+    _check(kind, resp)
+    return "désactivé"
+
+
 async def retirer(plan: list[dict]) -> list[dict]:
-    """Retire les fiches du plan. Une erreur arrête la suite : rien d'autre n'est retiré."""
+    """Retire (ou désactive, selon le réglage arr_action) les fiches du plan. Une erreur arrête la suite."""
     results = []
+    desactiver = (getattr(config.settings, "arr_action", "retirer") or "retirer") == "desactiver"
     for entry in plan:
         if entry["status"] != "a_retirer":
             results.append({**entry, "result": "absent"})
             continue
         kind = entry["kind"]
+        if desactiver:
+            try:
+                resultat = await _desactiver(kind, entry)
+            except ArrError as exc:
+                done = [r["title"] for r in results if r["result"] in ("retiré", "désactivé")]
+                suite = f" Déjà traité(s) : {', '.join(done)}." if done else ""
+                raise ArrError(f"{exc}{suite} Les fichiers n'ont pas été touchés.")
+            results.append({**entry, "result": resultat})
+            continue
         resp = await _request(kind, "DELETE", f"{APPS[kind]['path']}/{entry['id']}",
                               params={"deleteFiles": "false", "addImportListExclusion": "true"})
         if resp.status_code == 404:

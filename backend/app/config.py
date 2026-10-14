@@ -97,6 +97,14 @@ def _as_http_url(value) -> str:
     return texte
 
 
+def _as_arr_action(value) -> str:
+    """Radarr / Sonarr (version 50) : « retirer » la fiche, ou seulement la « desactiver »."""
+    texte = str(value or "retirer").strip().lower()
+    if texte not in ("retirer", "desactiver"):
+        raise ValueError("action Radarr / Sonarr : retirer ou desactiver")
+    return texte
+
+
 def _as_disk_folders(value) -> dict:
     """Dossier de destination propre à chaque disque (version 48) :
     {racine absolue du disque: {type: sous-dossier relatif}}. Un type absent (ou vide) garde
@@ -270,6 +278,8 @@ _FIELD_DEFS = {
     "radarr_api_key": (lambda: os.environ.get("RADARR_API_KEY", "").strip(), lambda v: str(v or "").strip()),
     "sonarr_url": (lambda: _as_http_url(os.environ.get("SONARR_URL", "")), _as_http_url),
     "sonarr_api_key": (lambda: os.environ.get("SONARR_API_KEY", "").strip(), lambda v: str(v or "").strip()),
+    # « retirer » : la fiche est supprimée de l'application. « desactiver » : elle reste, mais n'est plus cherchée.
+    "arr_action": (lambda: os.environ.get("ARR_ACTION", "retirer").strip().lower() or "retirer", _as_arr_action),
 }
 
 FIELDS = list(_FIELD_DEFS.keys())

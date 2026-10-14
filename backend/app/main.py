@@ -85,6 +85,7 @@ class SettingsUpdate(BaseModel):
     radarr_api_key: Optional[str] = None
     sonarr_url: Optional[str] = None
     sonarr_api_key: Optional[str] = None
+    arr_action: Optional[str] = None
 
 
 class OneFichierArchiveRequest(BaseModel):
@@ -1269,6 +1270,26 @@ async def onefichier_recover(key: str, unlocked: bool = Depends(adult_unlocked))
     return {"ok": True, **result}
 
 
+@app.post("/api/1fichier/entries/{key}/resend")
+async def onefichier_resend(key: str, unlocked: bool = Depends(adult_unlocked)):
+    """Renvoie vers 1fichier une archive ABSENTE (version 50), depuis sa copie locale. Confirmation côté interface.
+    L'entrée absente est retirée de l'index, puis un envoi neuf est lancé : si ce dernier ne démarre pas, la copie
+    locale reste en place et l'entrée peut être recréée en relançant l'envoi depuis la bibliothèque."""
+    if not onefichier.valid_key(key):
+        raise HTTPException(400, "Identifiant invalide.")
+    _visible_entry_or_404(key, unlocked)
+    try:
+        source = await asyncio.to_thread(onefichier.preparer_renvoi, key)
+        if config.settings.dry_run:
+            log_action("SIMULE", "1FICHIER", f"renvoi de {source}")
+            return {"ok": True, "dry_run": True}
+        await asyncio.to_thread(onefichier.retirer_absent, key)
+    except onefichier.OneFichierError as exc:
+        raise _onefichier_error(exc, exc.status or 409)
+    log_action("OK", "1FICHIER", f"archive absente retirée de l'index pour renvoi : {source}")
+    return await onefichier_archive(OneFichierArchiveRequest(paths=[source], after="keep"), unlocked=unlocked)
+
+
 @app.get("/api/1fichier/entries/{key}/access")
 def onefichier_access(key: str, unlocked: bool = Depends(adult_unlocked)):
     """Lien et mot de passe d'une archive, demandés explicitement par l'interface."""
@@ -2137,7 +2158,7 @@ async def _retirer_de_arr(media_type: str, items: list[str], dry: bool, metas: O
     except arr.ArrError as exc:
         raise HTTPException(exc.status, str(exc))
     for r in resultats:
-        log_action("OK" if r["result"] == "retiré" else "INFO", "ARR",
+        log_action("OK" if r["result"] in ("retiré", "désactivé") else "INFO", "ARR",
                    f"{r['app']} : {r['title']} ({r['result']}, fichiers conservés)")
 
 

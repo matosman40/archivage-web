@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v52">
+<link rel="stylesheet" href="style.css?v=20261014-v53">
 </head>
 <body>
 
@@ -619,6 +619,12 @@
       <label class="field"><span>Adresse de Sonarr</span><input type="text" id="set-sonarr-url" placeholder="http://192.168.1.10:8989"></label>
       <label class="field"><span>Clé API Sonarr</span><input type="password" id="set-sonarr-key" autocomplete="off"></label>
       <div class="settings-test"><button type="button" class="btn btn-ghost small" id="set-sonarr-test">Tester Sonarr</button> <span id="set-sonarr-result" class="muted small" aria-live="polite"></span></div>
+      <label class="field"><span>Action sur la fiche Radarr / Sonarr</span>
+        <select id="set-arr-action" aria-label="Action sur la fiche Radarr ou Sonarr">
+          <option value="retirer">Retirer la fiche (elle ne revient pas par une liste d'import)</option>
+          <option value="desactiver">Désactiver seulement (la fiche reste visible, mais n'est plus cherchée ni téléchargée)</option>
+        </select>
+      </label>
     </fieldset>
 
     <fieldset>
@@ -687,6 +693,7 @@
         <code>ONEFICHIER_CHECK_HOUR</code> (3 par défaut).
       </p>
       <p id="set-1f-checks-status" class="path-check-result muted small" aria-live="polite"></p>
+      <ol id="set-1f-checks-history" class="muted small" aria-label="Historique des contrôles 1fichier"></ol>
       <div class="path-check-row"><button type="button" class="btn btn-ghost small" id="set-1f-checks-run">Lancer les contrôles maintenant</button><span id="set-1f-checks-result" class="path-check-result muted small" aria-live="polite"></span></div>
       <label class="field"><span>Alertes : URL ntfy ou webhook Discord (facultatif, vide = aucune alerte)</span><input type="password" id="set-1f-notify" autocomplete="off" placeholder="https://ntfy.sh/mon-sujet"></label>
       <label class="field"><span>Copie de chaque archive sur un disque externe (dossier absolu monté, facultatif : deuxième copie, utilisée si 1fichier ne répond pas)</span><input type="text" id="set-1f-archive-copy" placeholder="/MVE/MEDIA/ARCHIVES-1FICHIER" autocomplete="off"></label>
@@ -830,16 +837,16 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v52"></script>
-<script src="js/list.js?v=20261014-v52"></script>
-<script src="js/person.js?v=20261014-v52"></script>
-<script src="js/shell.js?v=20261014-v52"></script>
-<script src="js/onefichier.js?v=20261014-v52"></script>
-<script src="js/automations.js?v=20261014-v52"></script>
-<script src="js/disks.js?v=20261014-v52"></script>
-<script src="js/identify.js?v=20261014-v52"></script>
-<script src="js/jobs.js?v=20261014-v52"></script>
-<script src="js/settings.js?v=20261014-v52"></script>
-<script src="js/app.js?v=20261014-v52"></script>
+<script src="js/core.js?v=20261014-v53"></script>
+<script src="js/list.js?v=20261014-v53"></script>
+<script src="js/person.js?v=20261014-v53"></script>
+<script src="js/shell.js?v=20261014-v53"></script>
+<script src="js/onefichier.js?v=20261014-v53"></script>
+<script src="js/automations.js?v=20261014-v53"></script>
+<script src="js/disks.js?v=20261014-v53"></script>
+<script src="js/identify.js?v=20261014-v53"></script>
+<script src="js/jobs.js?v=20261014-v53"></script>
+<script src="js/settings.js?v=20261014-v53"></script>
+<script src="js/app.js?v=20261014-v53"></script>
 </body>
 </html>

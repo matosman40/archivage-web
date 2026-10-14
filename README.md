@@ -2241,3 +2241,23 @@ Les envois absents ou corrompus restent visibles, avec leur marque. Le filtre «
 **Contrôle hebdomadaire.** Le contrôle complet tourne chaque semaine (`ONEFICHIER_CHECK_WEEKDAY` : 0 = lundi … 6 = dimanche, 6 par défaut ; heure : `ONEFICHIER_CHECK_HOUR`). Il est reporté pendant un envoi ou une restauration. Nombre de tests de restauration par passage : `ONEFICHIER_RESTORE_TESTS_PER_RUN` (1 par défaut). Chaque archive de 20 Go au plus est testée au plus une fois par mois, et jamais deux fois dans le même passage.
 
 **Limites.** La taille est comparée à chaque contrôle, mais une archive modifiée chez 1fichier sans changer de taille n'est détectée que par le test de restauration, et seulement pour les archives testées. Une archive de plus de 20 Go n'est pas testée automatiquement.
+
+## 43. Compléments : renvoi, historique, désactivation, dates, tests de bout en bout (version 50)
+
+**Renvoyer une archive absente.** Une archive marquée « Absent de 1fichier » propose le bouton « Renvoyer vers 1fichier » dans son détail. Le renvoi repart de la copie locale (chemin d'origine encore présent) : l'entrée absente est retirée de l'index, puis un envoi neuf est lancé, avec un nouveau lien et un nouveau mot de passe. Une confirmation est demandée, et annuler n'envoie rien. Une archive **corrompue** encore présente ne se renvoie pas : elle doit être supprimée à la main sur 1fichier ; au contrôle suivant elle devient « absente », et le bouton apparaît. Le renvoi refuse aussi une entrée en cours d'envoi, ou dont la copie locale a disparu.
+
+**Historique des contrôles.** Les 20 derniers contrôles (automatiques ou manuels) sont gardés : date, liens OK, absents, tailles différentes, erreurs, tests de restauration réussis et échoués. Ils s'affichent sous « Contrôles 1fichier » dans Réglages, le plus récent en premier.
+
+**Bilan hebdomadaire.** Le contrôle planifié envoie une notification « 1fichier : contrôle hebdomadaire OK » même quand tout va bien. Le contrôle manuel n'en envoie pas dans ce cas.
+
+**Radarr et Sonarr : retirer ou désactiver.** Le réglage « Action sur la fiche Radarr / Sonarr » (variable `ARR_ACTION`, défaut `retirer`) choisit ce qui se passe à la suppression :
+- `retirer` : la fiche est supprimée de l'application, sans fichiers, et exclue des listes d'import (comportement de la version 49).
+- `desactiver` : la fiche reste dans Radarr ou Sonarr, mais n'est plus surveillée : l'élément n'est plus cherché ni téléchargé. Une fiche déjà désactivée ne bouge pas. La confirmation le dit.
+
+**Dates affichées.** Un disque connecté indique la date de son dernier scan (« contenu scanné le … »). La liste de recherche indique la date de construction de la liste (« liste construite le … »), et « en cours d'actualisation » tant qu'elle se reconstruit.
+
+**Tests.**
+- `tests/e2e/lancer.sh` : tests navigateur de bout en bout sur un dossier temporaire, avec un Radarr factice et un index 1fichier d'exemple. Il faut `CHROME_PATH` (Chromium) ; `PLAYWRIGHT_MODULE` et `PYTHON` sont facultatifs. Aucun vrai disque ni compte 1fichier n'est utilisé.
+- `tests/mutations/mutations.py` : retire une garde à la fois dans une copie du dépôt et relance la suite. Une mutation « NON ATTRAPÉE » signale une garde que les tests ne protègent pas. Au dernier passage, 15 mutations sur 15 ont été attrapées.
+
+**Limites.** Le renvoi et les contrôles n'ont pas été essayés sur un vrai compte 1fichier : seules des réponses simulées ont été testées. L'historique ne garde que 20 contrôles. Les scénarios de bout en bout couvrent disques, catalogue, marques 1fichier, compteur et renvoi annulé ; le renvoi confirmé n'est pas joué, car il lancerait un vrai envoi.

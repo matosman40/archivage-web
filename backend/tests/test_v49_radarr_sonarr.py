@@ -5,6 +5,7 @@ Radarr et Sonarr sont simulés par un transport HTTP factice : on vérifie les a
 suppression de fichier.
 """
 import asyncio
+import json
 import re
 from types import SimpleNamespace
 
@@ -27,6 +28,7 @@ class Faux:
         self.appels = []
         self.code_delete = None      # code forcé pour les suppressions (ex. 500)
         self.injoignable = False
+        self.puts = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if self.injoignable:
@@ -44,6 +46,22 @@ class Faux:
         if path == "/api/v3/series" and request.method == "GET":
             return httpx.Response(200, json=self.series)
         trouve = re.match(r"/api/v3/(movie|series)/(\d+)$", path)
+        if trouve and request.method == "GET":
+            ident = int(trouve.group(2))
+            liste = self.films if trouve.group(1) == "movie" else self.series
+            for e in liste:
+                if e["id"] == ident:
+                    return httpx.Response(200, json=e)
+            return httpx.Response(404, json={})
+        if trouve and request.method == "PUT":
+            ident = int(trouve.group(2))
+            self.puts.append(json.loads(request.content))
+            liste = self.films if trouve.group(1) == "movie" else self.series
+            for i, e in enumerate(liste):
+                if e["id"] == ident:
+                    liste[i] = json.loads(request.content)
+                    return httpx.Response(200, json=liste[i])
+            return httpx.Response(404, json={})
         if trouve and request.method == "DELETE":
             if self.code_delete:
                 return httpx.Response(self.code_delete, json={})
@@ -138,8 +156,8 @@ def test_reglages_ne_renvoient_pas_la_cle(client, monkeypatch):
 
 def test_etat_sans_secret(client, faux):
     response = client.get("/api/arr/status")
-    assert response.json() == {"radarr": {"label": "Radarr", "configured": True},
-                               "sonarr": {"label": "Sonarr", "configured": True}}
+    assert response.json() == {"radarr": {"label": "Radarr", "configured": True, "action": "retirer"},
+                               "sonarr": {"label": "Sonarr", "configured": True, "action": "retirer"}}
     assert "CLE-RADARR" not in response.text
 
 
@@ -415,3 +433,33 @@ def test_automatisation_liberer_garde_le_choix_radarr(monkeypatch):
     garde = workflows._normaliser_action({"type": "envoyer_1fichier", "apres": "garder", "retirer_arr": True})
     assert coche["retirer_arr"] is True and decoche["retirer_arr"] is False
     assert "retirer_arr" not in garde
+
+
+def test_desactiver_garde_la_fiche_mais_ne_la_cherche_plus(faux, monkeypatch):
+    monkeypatch.setattr(config.settings, "arr_action", "desactiver")
+    plan = _plan("films", [{"title": "Alpha", "year": 2001, "tmdb_id": None}])
+    resultats = asyncio.run(arr.retirer(plan))
+    assert [r["result"] for r in resultats] == ["désactivé"]
+    assert faux.films and faux.films[0]["monitored"] is False  # toujours dans Radarr
+    assert not any(m == "DELETE" for m, _p, _q in faux.appels)
+
+
+def test_desactiver_ne_touche_pas_une_fiche_deja_desactivee(faux, monkeypatch):
+    monkeypatch.setattr(config.settings, "arr_action", "desactiver")
+    faux.films[0]["monitored"] = False
+    plan = _plan("films", [{"title": "Alpha", "year": 2001, "tmdb_id": None}])
+    assert [r["result"] for r in asyncio.run(arr.retirer(plan))] == ["désactivé"]
+    assert faux.puts == []
+
+
+def test_reglage_arr_action_refuse_une_valeur_inconnue():
+    from app import config as cfg
+    with pytest.raises(ValueError):
+        cfg._as_arr_action("supprimer")
+    assert cfg._as_arr_action(" Desactiver ") == "desactiver"
+
+
+def test_cle_sonarr_masquee_dans_les_erreurs(monkeypatch):
+    from app import main
+    monkeypatch.setattr(config.settings, "sonarr_api_key", "CLE-SECRETE-SONARR")
+    assert "CLE-SECRETE-SONARR" not in main._sans_secret("refus de Sonarr avec CLE-SECRETE-SONARR")

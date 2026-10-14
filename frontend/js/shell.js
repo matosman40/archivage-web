@@ -73,6 +73,7 @@ async function runSearch(term, { silent = false } = {}) {
   let results = null;
   let error = null;
   let refreshing = false;
+  let builtAt = null;
   try {
     const data = await api("/api/search", {
       method: "POST",
@@ -80,6 +81,7 @@ async function runSearch(term, { silent = false } = {}) {
     });
     results = data.items;
     refreshing = !!data.refreshing;
+    builtAt = data.built_at || null;
   } catch (err) {
     error = err.message;
   }
@@ -87,6 +89,7 @@ async function runSearch(term, { silent = false } = {}) {
   if (seq !== searchSeq || gen !== adultGen) return;
   state.loading = false;
   state.searchRefreshing = refreshing;
+  state.searchBuiltAt = builtAt;
   const sig = JSON.stringify(results);
   const changed = !silent || sig !== searchSig || error !== state.error;
   if (changed) {
@@ -335,8 +338,11 @@ function confirmArrRow(arr) {
   $("confirm-arr-row").classList.toggle("hidden", !arr);
   if (!arr) return;
   $("confirm-arr").checked = arr.checked !== false;
-  $("confirm-arr-text").textContent = `Retirer aussi la fiche de ${arr.label} : l'élément ne sera plus cherché ni téléchargé. `
-    + `Les fichiers gérés par ${arr.label} ne sont pas touchés.`;
+  $("confirm-arr-text").textContent = arr.action === "desactiver"
+    ? `Désactiver aussi la fiche de ${arr.label} : l'élément ne sera plus cherché ni téléchargé, mais reste visible dans ${arr.label}. `
+      + `Les fichiers ne sont pas touchés.`
+    : `Retirer aussi la fiche de ${arr.label} : l'élément ne sera plus cherché ni téléchargé. `
+      + `Les fichiers gérés par ${arr.label} ne sont pas touchés.`;
 }
 
 // Nom de l'application (Radarr pour les films, Sonarr pour les séries) si elle est configurée, sinon null.
@@ -345,7 +351,7 @@ async function arrLabelFor(mediaType) {
   try {
     const status = await api("/api/arr/status");
     const app = status[mediaType === "films" ? "radarr" : "sonarr"];
-    return app && app.configured ? app.label : null;
+    return app && app.configured ? { label: app.label, action: app.action || "retirer" } : null;
   } catch (_) {
     return null;
   }
@@ -385,7 +391,7 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
           <span>Saison ${esc(s.season)} · ${esc(s.episodes)} épisode${s.episodes > 1 ? "s" : ""} · ${esc(formatSize(s.size))}${s.sent ? ` <span class="chip ok">déjà sur 1fichier</span>` : ""}</span>
         </label>`).join("")}</div>`).join("") : "";
     seasonBox.classList.toggle("hidden", !usesSeasons);
-    confirmArrRow(arrLabel ? { label: arrLabel, checked: true } : null);
+    confirmArrRow(arrLabel ? { ...arrLabel, checked: true } : null);
     scopeRadios.forEach((r) => { r.checked = r.value === "seasons"; });
 
     const seasonsOn = () => usesSeasons && (scopeRadios.find((r) => r.checked) || { value: "seasons" }).value === "seasons";

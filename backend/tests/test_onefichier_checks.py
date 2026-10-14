@@ -126,3 +126,21 @@ def test_alerte_sans_url_n_envoie_rien(env, monkeypatch):
     monkeypatch.setattr(notify.httpx, "AsyncClient", lambda *a, **k: sent.append(1) or (_ for _ in ()).throw(AssertionError))
     asyncio.run(notify.send("titre", "message"))  # notify_url vide par défaut dans env
     assert sent == []
+
+
+def test_bilan_hebdomadaire_ok_envoye_meme_sans_probleme(env, monkeypatch):
+    """Version 50 : le contrôle planifié envoie un bilan même quand tout va bien ; le contrôle manuel non."""
+    from app import notify
+    monkeypatch.setattr(of.config.settings, "dry_run", True)  # aucun lien à interroger : bilan propre
+    monkeypatch.setattr(scheduler, "active_window", lambda now=None: {"name": "test", "onefichier_mbps": 0, "disk_mbps": 0})
+    alerts = []
+
+    async def fake_send(title, message):
+        alerts.append(title)
+
+    monkeypatch.setattr(notify, "send", fake_send)
+    asyncio.run(of.run_checks("planifié"))
+    assert alerts == ["1fichier : contrôle hebdomadaire OK"]
+    alerts.clear()
+    asyncio.run(of.run_checks("manuel"))
+    assert alerts == []

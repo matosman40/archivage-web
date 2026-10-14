@@ -75,7 +75,7 @@ const SOURCE_LABEL = { plex: "Plex", tmdb: "TMDB", fichier: "nom du fichier" };
 // ---------------------------------------------------------------------
 
 const state = {
-  searchRefreshing: false, searchPoll: null,
+  searchRefreshing: false, searchBuiltAt: null, searchPoll: null,
   mediaType: "films",
   results: [],          // résultats de la dernière recherche (non filtrés)
   visible: [],          // après filtres et tri : ce qui est affiché

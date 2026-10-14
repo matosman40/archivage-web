@@ -539,7 +539,7 @@ function renderOfDetail(e, { keepScroll = false } = {}) {
         </div>
       </div>
     </div>
-    <div class="detail-actions of-detail-actions">${actions}</div>
+    <div class="detail-actions of-detail-actions">${resendActions(e)}${actions}</div>
     ${e.status === "done" && !e.active ? `
     <section class="detail-section of-access" id="of-access">
       <h3>Récupérer hors de l'application</h3>
@@ -667,6 +667,35 @@ async function recoverEntry(key) {
   }
 }
 
+// Version 50 : une archive absente se renvoie depuis sa copie locale ; une archive corrompue encore présente
+// doit d'abord être supprimée à la main sur 1fichier (elle deviendra « absente » au contrôle suivant).
+function resendActions(e) {
+  if (e.active || e.status !== "done") return "";
+  if (e.etat === "absent") {
+    return `<button class="btn btn-primary" type="button" data-of-resend="${esc(e.key)}" data-of-title="${esc(ofMeta(e).title || e.title || e.key)}">Renvoyer vers 1fichier</button>`;
+  }
+  if (e.etat === "corrompu") {
+    return `<p class="muted small">Archive corrompue encore présente sur 1fichier : supprimez-la à la main, puis, une fois marquée absente au contrôle suivant, proposez « Renvoyer vers 1fichier ».</p>`;
+  }
+  return "";
+}
+
+async function resendEntry(key, titre) {
+  const ok = await askConfirm({
+    title: "Renvoyer vers 1fichier ?",
+    body: `${titre || "Cet élément"} : la copie locale est renvoyée vers 1fichier (nouvel envoi, nouveau lien et nouveau mot de passe). L'entrée absente est retirée de la liste.`,
+  });
+  if (!ok) return;
+  try {
+    const data = await api(`/api/1fichier/entries/${encodeURIComponent(key)}/resend`, { method: "POST" });
+    toast(data.dry_run ? "Simulation : renvoi non lancé." : "Renvoi lancé vers 1fichier.", "success");
+    closeDrawer("of-drawer");
+    await loadOneFichierView();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
 async function forgetEntry(key) {
   if (!confirm("Retirer cet envoi incomplet de la liste ? Un fichier partiellement envoyé reste à supprimer à la main sur 1fichier.")) return;
   try {
@@ -736,6 +765,8 @@ function onOfClick(e) {
   if (reveal) { revealEntry(reveal.dataset.ofReveal); return; }
   const check = e.target.closest("[data-of-check]");
   if (check) { checkEntry(check.dataset.ofCheck); return; }
+  const resend = e.target.closest("[data-of-resend]");
+  if (resend) { resendEntry(resend.dataset.ofResend, resend.dataset.ofTitle); return; }
   const recover = e.target.closest("[data-of-recover]");
   if (recover) { recoverEntry(recover.dataset.ofRecover); return; }
   const forget = e.target.closest("[data-of-forget]");
@@ -760,6 +791,14 @@ async function refreshChecksStatus() {
     const bad = r && (r.links_lost.length || r.errors.length || r.tests.some((t) => !t.ok));
     out.className = `path-check-result small ${bad ? "error" : "muted"}`;
     out.textContent = c.running ? "Contrôle en cours…" : `${last} · ${next}.`;
+    const hist = $("set-1f-checks-history");
+    if (hist) {
+      hist.innerHTML = (c.history || []).map((h) =>
+        `<li>${esc(fmtDateTime(h.at))} (${h.trigger === "planifié" ? "automatique" : "manuel"}) : ${h.links_ok} lien(s) OK, `
+        + `${h.absents} absent(s), ${h.tailles_differentes} taille(s) différente(s), ${h.errors} erreur(s), `
+        + `${h.tests_ok} test(s) réussi(s), ${h.tests_echoues} échoué(s)</li>`).join("")
+        || "<li>Aucun contrôle enregistré.</li>";
+    }
   } catch (err) {
     out.className = "path-check-result muted small";
     out.textContent = "État des contrôles indisponible.";
