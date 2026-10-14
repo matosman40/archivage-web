@@ -96,6 +96,16 @@ def locate(path: str) -> Optional[tuple[str, str]]:
     return None
 
 
+def meta_for(path: str) -> Optional[dict]:
+    """Fiche enregistrée d'un élément de disque (titre, année, identifiant TMDB), si elle existe."""
+    loc = locate(path)
+    if not loc:
+        return None
+    with _lock:
+        entry = _read().get(os.path.normpath(loc[1])) or {}
+    return (entry.get("meta") or {}).get(os.path.normpath(path))
+
+
 def locate_season(path: str) -> Optional[tuple[str, str]]:
     """(racine du disque, dossier de la série) si `path` est un dossier de saison
     (enfant direct d'une série MEDIA/SERIES d'un disque CONNECTÉ), sinon None."""

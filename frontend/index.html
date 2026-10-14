@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v48">
+<link rel="stylesheet" href="style.css?v=20261014-v49">
 </head>
 <body>
 
@@ -605,6 +605,21 @@
     </fieldset>
 
     <fieldset>
+      <legend>Radarr (films) et Sonarr (séries)</legend>
+      <p class="muted small settings-note">
+        Lors d'une suppression, la fiche peut être retirée de Radarr ou de Sonarr : l'élément n'est plus cherché ni
+        téléchargé. Ces applications ne touchent pas aux fichiers, et la fiche ne revient pas par une liste d'import.
+        La clé API se trouve dans Réglages › Général de chaque application.
+      </p>
+      <label class="field"><span>Adresse de Radarr</span><input type="text" id="set-radarr-url" placeholder="http://192.168.1.10:7878"></label>
+      <label class="field"><span>Clé API Radarr</span><input type="password" id="set-radarr-key" autocomplete="off"></label>
+      <div class="settings-test"><button type="button" class="btn btn-ghost small" id="set-radarr-test">Tester Radarr</button> <span id="set-radarr-result" class="muted small" aria-live="polite"></span></div>
+      <label class="field"><span>Adresse de Sonarr</span><input type="text" id="set-sonarr-url" placeholder="http://192.168.1.10:8989"></label>
+      <label class="field"><span>Clé API Sonarr</span><input type="password" id="set-sonarr-key" autocomplete="off"></label>
+      <div class="settings-test"><button type="button" class="btn btn-ghost small" id="set-sonarr-test">Tester Sonarr</button> <span id="set-sonarr-result" class="muted small" aria-live="polite"></span></div>
+    </fieldset>
+
+    <fieldset>
       <legend>TMDB (jaquettes, résumés, genres, notes, années)</legend>
       <p class="muted small settings-note">
         Pour les films ET les séries que Plex ne reconnaît pas (ou si Plex n'est pas configuré). Clé gratuite sur
@@ -729,6 +744,10 @@
       <label class="radio"><input type="radio" name="confirm-scope" value="whole"> Série entière (une seule archive, très volumineuse)</label>
       <div id="confirm-season-list" class="confirm-season-list"></div>
     </fieldset>
+    <label id="confirm-arr-row" class="check-row hidden">
+      <input id="confirm-arr" type="checkbox" checked>
+      <span id="confirm-arr-text"></span>
+    </label>
     <input id="confirm-delete-input" type="text" class="hidden" placeholder="SUPPRIMER" autocomplete="off" spellcheck="false" aria-label="Texte de confirmation">
     <div class="modal-actions">
       <button id="confirm-cancel" class="btn btn-ghost" type="button">Annuler</button>
@@ -809,16 +828,16 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v48"></script>
-<script src="js/list.js?v=20261014-v48"></script>
-<script src="js/person.js?v=20261014-v48"></script>
-<script src="js/shell.js?v=20261014-v48"></script>
-<script src="js/onefichier.js?v=20261014-v48"></script>
-<script src="js/automations.js?v=20261014-v48"></script>
-<script src="js/disks.js?v=20261014-v48"></script>
-<script src="js/identify.js?v=20261014-v48"></script>
-<script src="js/jobs.js?v=20261014-v48"></script>
-<script src="js/settings.js?v=20261014-v48"></script>
-<script src="js/app.js?v=20261014-v48"></script>
+<script src="js/core.js?v=20261014-v49"></script>
+<script src="js/list.js?v=20261014-v49"></script>
+<script src="js/person.js?v=20261014-v49"></script>
+<script src="js/shell.js?v=20261014-v49"></script>
+<script src="js/onefichier.js?v=20261014-v49"></script>
+<script src="js/automations.js?v=20261014-v49"></script>
+<script src="js/disks.js?v=20261014-v49"></script>
+<script src="js/identify.js?v=20261014-v49"></script>
+<script src="js/jobs.js?v=20261014-v49"></script>
+<script src="js/settings.js?v=20261014-v49"></script>
+<script src="js/app.js?v=20261014-v49"></script>
 </body>
 </html>

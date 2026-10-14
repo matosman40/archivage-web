@@ -248,8 +248,10 @@ async function runAction(operation, lot) {
   const seasonGroups = operation === "archive_1fichier" && state.mediaType === "series" && !lot
     ? await loadSeasonGroups(plan.items)
     : null;
+  // Suppression : proposer aussi de retirer la fiche de Radarr (films) ou Sonarr (séries), si configuré (version 49).
+  const arrLabel = operation === "delete" ? await arrLabelFor(state.mediaType) : null;
   const ok = await confirmAction(operation, destination, {
-    archiveMode, count: plan.items.length, total: plan.total_size, seasonGroups, names: planNames(plan.items),
+    archiveMode, count: plan.items.length, total: plan.total_size, seasonGroups, names: planNames(plan.items), arrLabel,
   });
   if (!ok.confirmed) return;
 
@@ -269,7 +271,10 @@ async function runAction(operation, lot) {
         merge: plan.merge,
       };
       if (operation !== "delete") body.destination = destination;
-      if (operation === "delete") body.confirm_delete_text = state.deleteConfirmText;
+      if (operation === "delete") {
+        body.confirm_delete_text = state.deleteConfirmText;
+        body.retirer_arr = !!ok.arr;
+      }
       data = await api("/api/jobs", { method: "POST", body: JSON.stringify(body) });
     }
     trackJob(data.job_id, operation, { live: true });
@@ -323,8 +328,29 @@ function clearConfirmNames() {
   if (box) { box.innerHTML = ""; box.classList.add("hidden"); }
 }
 
+// Ligne « retirer aussi de Radarr / Sonarr » de la fenêtre de confirmation (version 49).
+function confirmArrRow(arr) {
+  $("confirm-arr-row").classList.toggle("hidden", !arr);
+  if (!arr) return;
+  $("confirm-arr").checked = arr.checked !== false;
+  $("confirm-arr-text").textContent = `Retirer aussi la fiche de ${arr.label} : l'élément ne sera plus cherché ni téléchargé. `
+    + `Les fichiers gérés par ${arr.label} ne sont pas touchés.`;
+}
+
+// Nom de l'application (Radarr pour les films, Sonarr pour les séries) si elle est configurée, sinon null.
+async function arrLabelFor(mediaType) {
+  if (mediaType !== "films" && mediaType !== "series") return null;
+  try {
+    const status = await api("/api/arr/status");
+    const app = status[mediaType === "films" ? "radarr" : "sonarr"];
+    return app && app.configured ? app.label : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function confirmAction(operation, destination, { archiveMode = false, count = state.plan.items.length,
-    total = state.plan.total_size, seasonGroups = null, names = [] } = {}) {
+    total = state.plan.total_size, seasonGroups = null, names = [], arrLabel = null } = {}) {
   return new Promise((resolve) => {
     if (confirmOpen) { resolve({ confirmed: false }); return; }
     confirmOpen = true;
@@ -357,6 +383,7 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
           <span>Saison ${esc(s.season)} · ${esc(s.episodes)} épisode${s.episodes > 1 ? "s" : ""} · ${esc(formatSize(s.size))}${s.sent ? ` <span class="chip ok">déjà sur 1fichier</span>` : ""}</span>
         </label>`).join("")}</div>`).join("") : "";
     seasonBox.classList.toggle("hidden", !usesSeasons);
+    confirmArrRow(arrLabel ? { label: arrLabel, checked: true } : null);
     scopeRadios.forEach((r) => { r.checked = r.value === "seasons"; });
 
     const seasonsOn = () => usesSeasons && (scopeRadios.find((r) => r.checked) || { value: "seasons" }).value === "seasons";
@@ -434,6 +461,7 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
       afterBox.classList.add("hidden");
       seasonBox.classList.add("hidden");
       seasonList.innerHTML = "";
+      $("confirm-arr-row").classList.add("hidden");
       clearConfirmNames();
       confirmOpen = false;
     }
@@ -441,8 +469,9 @@ function confirmAction(operation, destination, { archiveMode = false, count = st
       if (okBtn.disabled) return;
       const chosen = after();
       const paths = seasonsOn() ? selectedSeasons().map((b) => b.dataset.seasonPath) : null;
+      const arr = arrLabel ? $("confirm-arr").checked : false;
       cleanup();
-      resolve({ confirmed: true, after: showAfter ? chosen : null, paths });
+      resolve({ confirmed: true, after: showAfter ? chosen : null, paths, arr });
     }
     function onCancel() {
       cleanup();

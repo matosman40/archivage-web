@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adult_auth, adult_media, config, disk_health, disk_integrity, disk_layout, disk_library, disk_meta, disk_moves, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb, workflows
+from . import arr, adult_auth, adult_media, config, disk_health, disk_integrity, disk_layout, disk_library, disk_meta, disk_moves, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb, workflows
 from . import series as series_mod
 from .logs import log_action, read_log
 from .naming import guess_title_year
@@ -81,6 +81,10 @@ class SettingsUpdate(BaseModel):
     notify_url: Optional[str] = None
     archive_copy_dir: Optional[str] = None
     transfer_windows: Optional[List[dict]] = None  # plages de transfert (validées dans config)
+    radarr_url: Optional[str] = None
+    radarr_api_key: Optional[str] = None
+    sonarr_url: Optional[str] = None
+    sonarr_api_key: Optional[str] = None
 
 
 class OneFichierArchiveRequest(BaseModel):
@@ -111,6 +115,7 @@ class JobRequest(BaseModel):
     merge: bool = False
     confirm_delete_text: Optional[str] = None
     priority: Literal["urgent", "normal", "bas"] = "normal"
+    retirer_arr: bool = False  # suppression : retirer aussi la fiche de Radarr / Sonarr (version 49)
 
 
 class JobPriorityRequest(BaseModel):
@@ -120,6 +125,7 @@ class JobPriorityRequest(BaseModel):
 class DiskItemsRequest(BaseModel):
     items: list[str]                   # éléments de la bibliothèque disque (enfants directs MEDIA/…)
     confirm_delete_text: Optional[str] = None
+    retirer_arr: bool = False          # retirer aussi la fiche de Radarr / Sonarr (version 49)
 
 
 class DiskTransferRequest(BaseModel):
@@ -247,6 +253,8 @@ def _public_settings(s: "config.Settings") -> dict:
     data["tmdb_api_key"] = _masque(data.get("tmdb_api_key") or "", 4)
     data["plex_token"] = _masque(data.get("plex_token") or "", 4)
     data["notify_url"] = _masque(data.get("notify_url") or "", 6)  # l'URL peut contenir un jeton (webhook)
+    data["radarr_api_key"] = _masque(data.get("radarr_api_key") or "", 4)
+    data["sonarr_api_key"] = _masque(data.get("sonarr_api_key") or "", 4)
     return data
 
 
@@ -257,7 +265,8 @@ def _masque(valeur: str, visibles: int) -> str:
 def _sans_secret(texte: str) -> str:
     """Message d'erreur sans secret. Une erreur httpx contient l'adresse appelée, donc la clé
     ou le jeton : on les remplace avant de renvoyer le message au navigateur."""
-    for secret in (config.settings.tmdb_api_key, config.settings.plex_token, config.settings.onefichier_api_key):
+    for secret in (config.settings.tmdb_api_key, config.settings.plex_token, config.settings.onefichier_api_key,
+                   config.settings.radarr_api_key, config.settings.sonarr_api_key):
         if secret:
             texte = texte.replace(secret, "•••")
     return texte
@@ -276,7 +285,7 @@ def put_settings(req: SettingsUpdate):
     # (sinon enregistrer le formulaire écraserait la vraie clé).
     # Les secrets renvoyés masqués par GET sont ignorés à l'enregistrement (sinon le formulaire
     # écraserait le vrai secret par le texte masqué).
-    for champ in ("onefichier_api_key", "notify_url", "tmdb_api_key", "plex_token"):
+    for champ in ("onefichier_api_key", "notify_url", "tmdb_api_key", "plex_token", "radarr_api_key", "sonarr_api_key"):
         if str(patch.get(champ, "")).startswith("•"):
             patch.pop(champ)
     if not patch:
@@ -733,6 +742,9 @@ async def create_job(req: JobRequest, unlocked: bool = Depends(adult_unlocked)):
                 f"Rien n'a été copié ni supprimé. Passe le montage en :rw dans docker-compose.yml "
                 f"puis `docker compose up -d`.",
             )
+
+    if req.operation == "delete" and req.retirer_arr:
+        await _retirer_de_arr(req.media_type, items, dry)
 
     if req.operation != "delete":
         if not req.destination:
@@ -1506,6 +1518,9 @@ async def disk_delete(req: DiskItemsRequest, unlocked: bool = Depends(adult_unlo
                 f"Impossible de supprimer cet élément du disque : {blocked[0]}. Le disque est probablement "
                 f"monté en lecture seule. Rien n'a été supprimé.",
             )
+    if req.retirer_arr:
+        metas = {p: disk_library.meta_for(p) for p in items}
+        await _retirer_de_arr(sorted(kinds)[0], items, config.settings.dry_run, metas)
     job = jobs.create_job(operation="delete", media_type=sorted(kinds)[0], items=items, destination=None,
                           adult=adult)
     _launch(job)
@@ -2089,6 +2104,48 @@ async def workflows_run(regle_id: str):
         raise HTTPException(404, "Automatisation introuvable.")
     _lancer_en_fond(workflows.lancer_maintenant(regle_id))
     return {"started": True}
+
+
+# ---------------------------------------------------------------------
+# Radarr et Sonarr : retrait des fiches lors d'une suppression (version 49)
+# ---------------------------------------------------------------------
+
+async def _retirer_de_arr(media_type: str, items: list[str], dry: bool, metas: Optional[dict] = None) -> None:
+    """Retire de Radarr/Sonarr les fiches des éléments à supprimer. Une erreur lève une HTTPException
+    AVANT toute suppression : sans retrait confirmé, les fichiers restent où ils sont."""
+    try:
+        plan = await arr.preparer(media_type, items, metas)
+        if not plan:
+            return  # application non configurée pour ce type : rien à retirer
+        if dry:
+            for entry in plan:
+                log_action("SIMULE", "ARR", f"{entry['app']} : {entry['title']} ({entry['status']})")
+            return
+        resultats = await arr.retirer(plan)
+    except arr.ArrError as exc:
+        raise HTTPException(exc.status, str(exc))
+    for r in resultats:
+        log_action("OK" if r["result"] == "retiré" else "INFO", "ARR",
+                   f"{r['app']} : {r['title']} ({r['result']}, fichiers conservés)")
+
+
+class ArrTestRequest(BaseModel):
+    kind: Literal["radarr", "sonarr"]
+
+
+@app.get("/api/arr/status")
+def arr_status():
+    """Radarr et Sonarr configurés ou non (sans clé)."""
+    return arr.status()
+
+
+@app.post("/api/arr/test")
+async def arr_test(req: ArrTestRequest):
+    """Teste la connexion à Radarr ou Sonarr avec les réglages enregistrés."""
+    try:
+        return await arr.test_connection(req.kind)
+    except arr.ArrError as exc:
+        raise HTTPException(exc.status, str(exc))
 
 
 # ---------------------------------------------------------------------

@@ -2188,3 +2188,25 @@ Les routes qui modifient (`PUT`, `POST`) sont protégées par `ACCESS_TOKEN` (se
 - Les transferts vers 1fichier ne passent pas par ce suivi : ils ont leur propre index (section 37).
 
 **Vérification.** `backend/tests/test_v48_dossiers_suivi.py` contient 53 tests : validation des dossiers par disque, parcours (liens sortants, dossier adulte masqué), choix du dossier et création, déplacement dans le disque (renommage sans copie, collisions, tâches en cours, autre volume, simulation, types mêlés, `ALLOW_DELETE`, session adulte), suivi (événements de copie, erreurs, ignorés, nom renommé, adultes masqués, simulation, filtres, plafond, interruption au démarrage, effacement), copie réelle par rsync avec trace vérifiée, et protection par jeton des routes qui modifient. Dix garde-fous ont été retirés un à un dans une copie : la suite échoue à chaque fois. Un parcours navigateur (Chromium, disque simulé) vérifie la fenêtre des dossiers, le déplacement avec confirmation, le suivi et l'absence de défilement horizontal sur téléphone.
+
+## 40. Radarr et Sonarr : retirer une fiche avec l'élément (version 49)
+
+Quand on supprime un film ou une série du serveur ou d'un disque, on peut aussi retirer sa fiche de Radarr (films) ou de Sonarr (séries). Sans ce retrait, l'application continue de chercher et de télécharger l'élément supprimé.
+
+**Réglages.** Une section « Radarr (films) et Sonarr (séries) » demande, pour chaque application, l'adresse (`http://` ou `https://`) et la clé API. La clé est masquée à l'affichage, comme les autres secrets, et n'est jamais renvoyée au navigateur. Un bouton « Tester » appelle l'application (`GET /api/v3/system/status`) et affiche son nom et sa version. Variables d'environnement : `RADARR_URL`, `RADARR_API_KEY`, `SONARR_URL`, `SONARR_API_KEY`.
+
+**Suppression.** Quand Radarr ou Sonarr est configuré, la fenêtre de confirmation affiche une case « Retirer aussi la fiche de … », cochée par défaut. Elle existe dans la suppression du catalogue et dans la suppression sur disque. Si la case est cochée, le serveur :
+
+1. interroge l'application et cherche la fiche de chaque élément, sans rien modifier ;
+2. supprime les fiches trouvées avec `deleteFiles=false` (Radarr et Sonarr ne touchent pas aux fichiers) et `addImportListExclusion=true` (la fiche ne revient pas par une liste d'import) ;
+3. seulement ensuite lance la suppression des fichiers.
+
+**Correspondance.** On compare l'identifiant TMDB quand l'application le fournit, sinon le titre normalisé (sans accents ni ponctuation) et l'année. Une fiche introuvable n'est pas une erreur : l'élément est simplement absent de l'application. Plusieurs fiches possibles font échouer toute la suppression : on ne devine jamais, et rien n'est supprimé. Il faut alors retirer le doublon dans Radarr ou Sonarr, ou identifier l'élément.
+
+**Erreurs.** Une application injoignable, une clé refusée ou une erreur avant la suppression arrête l'opération : les fichiers ne sont pas supprimés. Une erreur pendant le retrait des fiches indique celles déjà retirées. Une fois les fiches retirées, si la suppression des fichiers échoue ensuite, les fiches restent retirées. En simulation (`DRY_RUN`), les requêtes de lecture ont lieu mais aucune fiche n'est retirée ; le journal indique `SIMULE`.
+
+**Points d'accès.** `GET /api/arr/status` (configuré ou non, sans secret) et `POST /api/arr/test` (test de connexion, modification : exige le jeton d'accès si `ACCESS_TOKEN` est défini). Les variables `.env` sont décrites dans `.env.example`.
+
+**Limites.** Les ebooks ne sont pas concernés (ni Radarr ni Sonarr). La case est décochable à chaque suppression. Le retrait n'annule pas un téléchargement déjà en cours dans le client de téléchargement.
+
+**Vérification.** `backend/tests/test_v49_radarr_sonarr.py` contient 31 tests : validation de l'adresse, configuration et masquage de la clé, correspondance (TMDB, titre et année, ambiguïté, absence), retrait (paramètres `deleteFiles` et `addImportListExclusion`, fiche absente, erreur en cours de route), refus avant suppression, simulation, routes de test. La suite complète passe (456 tests). L'interface a été chargée dans Chromium sans erreur JavaScript ; le parcours complet de la case de confirmation avec une fausse application n'a pas encore été joué.

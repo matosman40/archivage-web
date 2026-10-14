@@ -146,6 +146,8 @@ function bindEvents() {
   $("disk-category").addEventListener("click", diskCategory);
   $("disk-1f").addEventListener("click", diskToOneFichier);
   bindDiskExtras();
+  $("set-radarr-test").addEventListener("click", () => testArr("radarr"));
+  $("set-sonarr-test").addEventListener("click", () => testArr("sonarr"));
   $("disk-delete").addEventListener("click", diskDelete);
   $("of-drawer-close").addEventListener("click", () => closeDrawer("of-drawer"));
   // Une affiche qui ne charge pas est retirée : le dégradé reste visible à la place.

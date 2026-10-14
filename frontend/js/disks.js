@@ -475,7 +475,9 @@ function toggleDiskSelectAll() {
 }
 
 // Confirmation simple (la fenêtre partagée #confirm-modal, sans choix « après sauvegarde »).
-function askConfirm({ title, body, typed = null, names = [] }) {
+// arr (version 49) : { label, checked } ajoute la case « retirer aussi de Radarr / Sonarr » ; son
+// état est reporté dans arr.checked à la confirmation.
+function askConfirm({ title, body, typed = null, names = [], arr = null }) {
   return new Promise((resolve) => {
     if (confirmOpen) { resolve(false); return; }
     confirmOpen = true;
@@ -489,9 +491,14 @@ function askConfirm({ title, body, typed = null, names = [] }) {
     input.value = "";
     input.classList.toggle("hidden", !typed);
     fillConfirmNames(names);
+    confirmArrRow(arr);
 
     const check = () => { okBtn.disabled = !!typed && input.value.trim() !== typed; };
-    const onOk = () => { if (!okBtn.disabled) finish(true); };
+    const onOk = () => {
+      if (okBtn.disabled) return;
+      if (arr) arr.checked = $("confirm-arr").checked;
+      finish(true);
+    };
     const onCancel = () => finish(false);
     const onKey = (e) => {
       if (e.key === "Enter" && !okBtn.disabled) onOk();
@@ -509,6 +516,7 @@ function askConfirm({ title, body, typed = null, names = [] }) {
       document.removeEventListener("keydown", onEsc);
       okBtn.disabled = false;
       input.classList.add("hidden");
+      $("confirm-arr-row").classList.add("hidden");
       clearConfirmNames();
       confirmOpen = false;
       resolve(value);
@@ -587,17 +595,25 @@ async function diskToOneFichier() {
 async function diskDelete() {
   const rows = diskSelectedRows();
   if (!rows.length) return;
+  // Radarr (films) ou Sonarr (séries) : la fiche peut être retirée avec l'élément (version 49).
+  const label = await arrLabelFor(state.disk.kind);
+  const arr = label ? { label, checked: true } : null;
   const ok = await askConfirm({
     title: "Supprimer du disque",
     body: `${NF0.format(rows.length)} élément(s), ${formatSize(diskTotalSize(rows))}, seront supprimés définitivement du disque. Cette action est irréversible.`,
     typed: state.disk.deleteConfirmText,
     names: rows.map(diskTitle),
+    arr,
   });
   if (!ok) return;
   try {
     const data = await api("/api/disk-library/delete", {
       method: "POST",
-      body: JSON.stringify({ items: rows.map((r) => r.path), confirm_delete_text: state.disk.deleteConfirmText }),
+      body: JSON.stringify({
+        items: rows.map((r) => r.path),
+        confirm_delete_text: state.disk.deleteConfirmText,
+        retirer_arr: !!(arr && arr.checked),
+      }),
     });
     afterDiskJob(data.job_id, "delete");
   } catch (err) {

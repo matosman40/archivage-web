@@ -207,6 +207,12 @@ async function openSettingsDrawer() {
     // Jetons masqués par le serveur : la valeur enregistrée sert à ne renvoyer que ce qui change.
     $("set-plex-token").value = s.plex_token || "";
     $("set-plex-token").dataset.saved = s.plex_token || "";
+    $("set-radarr-url").value = s.radarr_url || "";
+    $("set-radarr-key").value = s.radarr_api_key || "";
+    $("set-radarr-key").dataset.saved = s.radarr_api_key || "";
+    $("set-sonarr-url").value = s.sonarr_url || "";
+    $("set-sonarr-key").value = s.sonarr_api_key || "";
+    $("set-sonarr-key").dataset.saved = s.sonarr_api_key || "";
     $("set-tmdb-key").value = s.tmdb_api_key || "";
     $("set-tmdb-key").dataset.saved = s.tmdb_api_key || "";
     $("set-tmdb-lang").value = s.tmdb_language || "fr-FR";
@@ -270,6 +276,12 @@ async function saveSettingsOnce() {
   // Clés masquées par le serveur : n'envoyer que ce qui a été retapé.
   const plexToken = $("set-plex-token").value;
   if (plexToken !== $("set-plex-token").dataset.saved) patch.plex_token = plexToken;
+  patch.radarr_url = $("set-radarr-url").value.trim();
+  patch.sonarr_url = $("set-sonarr-url").value.trim();
+  for (const app of ["radarr", "sonarr"]) {
+    const cle = $(`set-${app}-key`).value.trim();
+    if (cle !== $(`set-${app}-key`).dataset.saved) patch[`${app}_api_key`] = cle;
+  }
   const tmdbKey = $("set-tmdb-key").value.trim();
   if (tmdbKey !== $("set-tmdb-key").dataset.saved) patch.tmdb_api_key = tmdbKey;
   const key1f = $("set-1f-key").value.trim();
@@ -688,4 +700,18 @@ function initAdult() {
   $("adult-code-modal").addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.stopPropagation(); closeAdultCode(); }
   });
+}
+
+// Test de connexion à Radarr ou Sonarr avec les réglages ENREGISTRÉS (version 49).
+async function testArr(kind) {
+  const out = $(`set-${kind}-result`);
+  out.textContent = "Test en cours…";
+  try {
+    const data = await api("/api/arr/test", { method: "POST", body: JSON.stringify({ kind }) });
+    out.textContent = `Connecté : ${data.app} ${data.version}`;
+    out.className = "muted small";
+  } catch (err) {
+    out.textContent = err.message;
+    out.className = "danger-text small";
+  }
 }

@@ -89,6 +89,14 @@ DISK_FOLDER_KINDS = ("films", "series", "ebooks")
 MAX_DISK_FOLDERS = 50
 
 
+def _as_http_url(value) -> str:
+    """Adresse d'une application (Radarr, Sonarr) : vide, ou commence par http:// ou https://."""
+    texte = str(value or "").strip().rstrip("/")
+    if texte and not texte.startswith(("http://", "https://")):
+        raise ValueError("adresse : http:// ou https:// attendu")
+    return texte
+
+
 def _as_disk_folders(value) -> dict:
     """Dossier de destination propre à chaque disque (version 48) :
     {racine absolue du disque: {type: sous-dossier relatif}}. Un type absent (ou vide) garde
@@ -257,6 +265,11 @@ _FIELD_DEFS = {
     "transfer_windows": (lambda: _as_windows(DEFAULT_TRANSFER_WINDOWS), _as_windows),
     # Dossier de destination propre à chaque disque externe (version 48) ; vide = dossiers globaux.
     "disk_folders": (lambda: {}, _as_disk_folders),
+    # Radarr (films) et Sonarr (séries) : retrait des fiches lors d'une suppression (version 49).
+    "radarr_url": (lambda: _as_http_url(os.environ.get("RADARR_URL", "")), _as_http_url),
+    "radarr_api_key": (lambda: os.environ.get("RADARR_API_KEY", "").strip(), lambda v: str(v or "").strip()),
+    "sonarr_url": (lambda: _as_http_url(os.environ.get("SONARR_URL", "")), _as_http_url),
+    "sonarr_api_key": (lambda: os.environ.get("SONARR_API_KEY", "").strip(), lambda v: str(v or "").strip()),
 }
 
 FIELDS = list(_FIELD_DEFS.keys())
