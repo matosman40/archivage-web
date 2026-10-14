@@ -105,6 +105,11 @@ class OneFichierError(Exception):
         self.status = status
 
 
+class ArchiveCorrompue(OneFichierError):
+    """Archive présente chez 1fichier mais abîmée : taille, empreinte SHA-256 ou CRC 7z fausse
+    (version 50). Sous-classe d'OneFichierError : les appels existants la traitent pareil."""
+
+
 def folder_name(tmdb_id) -> str:
     return f"tmdb-{tmdb_id}"
 
@@ -269,6 +274,20 @@ def _get_entry(key: str) -> Optional[dict]:
     return {**entry, "key": key, "kind": entry_kind(entry)}
 
 
+def etat_fichier(entry: dict) -> Optional[str]:
+    """État d'un envoi terminé (version 50) : present, absent (lien introuvable chez 1fichier),
+    corrompu (dernier test de restauration en échec sur l'archive), ou non_verifie."""
+    if entry.get("status") != "done":
+        return None
+    if entry.get("link_ok") is False:
+        return "absent"
+    if entry.get("corrompu"):
+        return "corrompu"
+    if entry.get("link_ok") is True:
+        return "present"
+    return "non_verifie"
+
+
 def list_entries() -> list[dict]:
     """Entrées de l'index, sans mot de passe ni lien (ce que l'interface affiche)."""
     data = _snapshot()
@@ -277,6 +296,7 @@ def list_entries() -> list[dict]:
         item = {k: v for k, v in entry.items() if k not in _SECRET_FIELDS}
         item["key"] = key
         item["kind"] = entry_kind(entry)
+        item["etat"] = etat_fichier(entry)
         item["active"] = key in _ACTIVE
         if item["active"]:
             item["progress"] = dict(_PROGRESS.get(key, {}))
@@ -781,7 +801,7 @@ def _7z_create(parent: str, base: str, archive: str, password: str, level: int) 
 def _7z_test(archive: str, password: str) -> None:
     proc = _run_7z(["t", "-y", "-bd", f"-p{password}", archive], password)
     if proc.returncode != 0:
-        raise OneFichierError(f"vérification de l'archive échouée : {_7z_error(proc, password)}")
+        raise ArchiveCorrompue(f"vérification de l'archive échouée : {_7z_error(proc, password)}")
 
 
 def _7z_extract(archive: str, password: str, out_dir: str) -> None:
@@ -2120,7 +2140,8 @@ def clear_staging() -> dict:
 # Contrôles planifiés (version 30) : liens, test de restauration, alertes
 # ---------------------------------------------------------------------
 
-CHECK_HOUR = int(os.environ.get("ONEFICHIER_CHECK_HOUR", "3"))  # heure locale du contrôle quotidien
+CHECK_HOUR = int(os.environ.get("ONEFICHIER_CHECK_HOUR", "3"))  # heure locale du contrôle hebdomadaire
+CHECK_WEEKDAY = int(os.environ.get("ONEFICHIER_CHECK_WEEKDAY", "6"))  # jour : 0 = lundi … 6 = dimanche (version 50)
 CHECK_PAUSE = 1.0                      # secondes entre deux appels à 1fichier
 RESTORE_TEST_EVERY = 30 * 86400        # chaque élément est testé au plus une fois par mois
 RESTORE_TEST_MAX_BYTES = 20 * 10**9    # test limité aux archives de 20 Go au plus (bande passante)
@@ -2128,11 +2149,13 @@ _checks = {"running": False}
 
 
 def _next_run_at(now: Optional[float] = None) -> float:
+    """Prochain contrôle hebdomadaire : le jour CHECK_WEEKDAY à CHECK_HOUR (heure locale)."""
     now = time.time() if now is None else now
     t = time.localtime(now)
     candidate = time.mktime((t.tm_year, t.tm_mon, t.tm_mday, CHECK_HOUR, 0, 0, 0, 0, -1))
+    candidate += ((CHECK_WEEKDAY - t.tm_wday) % 7) * 86400
     if candidate <= now:
-        candidate += 86400
+        candidate += 7 * 86400
     return candidate
 
 
@@ -2189,13 +2212,15 @@ async def test_restore(key: str) -> dict:
         holder: dict = {"done": 0}
         await asyncio.to_thread(_download_blocking, direct, archive, holder)
         if size and os.path.getsize(archive) != size:
-            raise OneFichierError("téléchargement incomplet (taille différente)")
+            raise ArchiveCorrompue("téléchargement incomplet (taille différente)")
         if entry.get("sha256") and await asyncio.to_thread(_sha256_file, archive) != entry["sha256"]:
-            raise OneFichierError("empreinte SHA-256 différente de celle de l'envoi")
+            raise ArchiveCorrompue("empreinte SHA-256 différente de celle de l'envoi")
         await asyncio.to_thread(_7z_test, archive, entry["password"])
         result["ok"] = True
     except Exception as exc:
         result["error"] = str(exc) if isinstance(exc, OneFichierError) else f"erreur inattendue ({exc})"
+        # Seule une archive abîmée est marquée. Une erreur réseau ne dit rien de l'archive.
+        result["corrompue"] = isinstance(exc, ArchiveCorrompue)
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)
@@ -2206,6 +2231,10 @@ async def test_restore(key: str) -> dict:
         current = d["entries"].get(key)
         if current:
             current.update(last_test_at=checked, last_test_ok=result["ok"], last_test_error=result["error"])
+            if result["ok"] is True:
+                current["corrompu"] = False
+            elif result.get("corrompue"):
+                current["corrompu"] = True
     await asyncio.to_thread(_update, fn)
     log_action("OK" if result["ok"] else "ALERTE", "1FICHIER",
                f"{entry.get('folder')} : test de restauration {'réussi' if result['ok'] else 'échoué'}")
@@ -2295,7 +2324,7 @@ async def run_checks_safely(trigger: str) -> None:
 
 
 async def scheduler_loop() -> None:
-    """Un contrôle complet par jour, à CHECK_HOUR. Reporté tant qu'un envoi ou une restauration tourne."""
+    """Un contrôle complet par semaine (jour CHECK_WEEKDAY, heure CHECK_HOUR). Reporté tant qu'un envoi ou une restauration tourne."""
     while True:
         now = time.time()
         await asyncio.sleep(max(60.0, _next_run_at(now) - now))

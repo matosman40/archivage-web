@@ -530,12 +530,6 @@ def adult_set_code(req: AdultCodeRequest, request: Request, response: Response):
     return {"unlocked": True, "code_set": True}
 
 
-def _envois_presents(entries: list) -> list:
-    """Envois encore présents chez 1fichier (version 50) : terminés, et le lien n'a pas été constaté perdu.
-    Un envoi en cours reste visible, sa progression est affichée dans la liste."""
-    return [e for e in entries if e.get("active") or (e.get("status") == "done" and e.get("link_ok") is not False)]
-
-
 def _presents(items: list) -> list:
     """Éléments dont le fichier ou le dossier existe encore sur le serveur (version 50) : une copie
     en mémoire ou sur disque peut être plus ancienne que ce qu'il y a réellement."""
@@ -992,11 +986,7 @@ async def onefichier_state(unlocked: bool = Depends(adult_unlocked)):
     except onefichier.OneFichierError as exc:
         raise _onefichier_error(exc, 500)
     state["entries"] = adult_media.filter_visible(state["entries"], unlocked)  # films adultes masqués sans session
-    # Version 50 : seuls les envois présents chez 1fichier sont listés (terminés, lien non constaté perdu).
-    # En cours de transfert, l'élément reste visible : sa progression est affichée dans la liste.
-    presents = _envois_presents(state["entries"])
-    state["absents_masques"] = len(state["entries"]) - len(presents)
-    state["entries"] = presents
+    # Version 50 : chaque envoi porte son état (etat : present, absent, corrompu, non_verifie) ; rien n'est masqué.
     return _json_rapide({
         "configured": onefichier.is_configured(),
         "index_file": onefichier.index_path(),

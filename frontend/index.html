@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v49">
+<link rel="stylesheet" href="style.css?v=20261014-v51">
 </head>
 <body>
 
@@ -323,6 +323,7 @@
         <p id="of-sub" class="muted small"></p>
       </div>
       <div class="of-head-actions">
+        <button id="of-verify" class="btn btn-ghost small" type="button" title="Vérifie que chaque archive est présente chez 1fichier et lit un échantillon (taille, empreinte, CRC)">Vérifier les fichiers</button>
         <button id="of-refresh-meta" class="btn btn-ghost small" type="button">Actualiser les fiches</button>
         <button id="of-settings" class="btn btn-ghost small" type="button">Réglages 1fichier</button>
       </div>
@@ -347,6 +348,7 @@
         <option value="all">Tous les statuts</option>
         <option value="restored">Déjà restaurés</option>
         <option value="pending">Envois incomplets</option>
+        <option value="problemes">Absents ou corrompus</option>
       </select>
       <select id="of-tmdb" aria-label="Infos TMDB">
         <option value="all">Toutes les infos TMDB</option>
@@ -828,16 +830,16 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v49"></script>
-<script src="js/list.js?v=20261014-v49"></script>
-<script src="js/person.js?v=20261014-v49"></script>
-<script src="js/shell.js?v=20261014-v49"></script>
-<script src="js/onefichier.js?v=20261014-v49"></script>
-<script src="js/automations.js?v=20261014-v49"></script>
-<script src="js/disks.js?v=20261014-v49"></script>
-<script src="js/identify.js?v=20261014-v49"></script>
-<script src="js/jobs.js?v=20261014-v49"></script>
-<script src="js/settings.js?v=20261014-v49"></script>
-<script src="js/app.js?v=20261014-v49"></script>
+<script src="js/core.js?v=20261014-v51"></script>
+<script src="js/list.js?v=20261014-v51"></script>
+<script src="js/person.js?v=20261014-v51"></script>
+<script src="js/shell.js?v=20261014-v51"></script>
+<script src="js/onefichier.js?v=20261014-v51"></script>
+<script src="js/automations.js?v=20261014-v51"></script>
+<script src="js/disks.js?v=20261014-v51"></script>
+<script src="js/identify.js?v=20261014-v51"></script>
+<script src="js/jobs.js?v=20261014-v51"></script>
+<script src="js/settings.js?v=20261014-v51"></script>
+<script src="js/app.js?v=20261014-v51"></script>
 </body>
 </html>
