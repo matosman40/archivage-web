@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0f1115">
+<meta name="description" content="Archivage de médiathèque : films, séries et ebooks">
+<title>Archivage — Médiathèque</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
+<!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
+     modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
+<link rel="stylesheet" href="style.css?v=20261013-v44">
+</head>
+<body>
+
+<div class="app">
+
+<!-- ================================================================ -->
+<header class="app-header">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">◎</span>
+    <div class="brand-text">
+      <h1 id="app-title">Archivage</h1>
+      <span class="brand-sub">médiathèque</span>
+    </div>
+  </div>
+
+  <nav class="media-tabs" role="tablist" aria-label="Type de média">
+    <button class="media-tab is-active" role="tab" data-media="films" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor" stroke="none"/></svg>
+      <span>Films</span>
+    </button>
+    <button class="media-tab" role="tab" data-media="series" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M8 21h8M12 18v3"/></svg>
+      <span>Séries</span>
+    </button>
+    <button class="media-tab" role="tab" data-media="ebooks" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22.5z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5a2.5 2.5 0 0 1 2.5 2.5z"/></svg>
+      <span>Ebooks</span>
+    </button>
+    <button class="media-tab media-tab-adult hidden" role="tab" data-media="adultes" aria-selected="false" title="Films adultes (code requis)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 7.7-1.5"/></svg>
+      <span>Adultes</span>
+    </button>
+    <button class="media-tab media-tab-1f" role="tab" data-media="1fichier" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18a4 4 0 0 1-.6-7.95A6 6 0 0 1 18 9.5a4.5 4.5 0 0 1 .4 8.5z"/><path d="M12 11v6M9.5 14.5 12 17l2.5-2.5"/></svg>
+      <span>1fichier</span>
+    </button>
+    <button class="media-tab media-tab-disk" role="tab" data-media="disques" aria-selected="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/></svg>
+      <span>Disques</span>
+    </button>
+  </nav>
+
+  <form id="search-form" class="search" role="search">
+    <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+    <input id="search-term" type="search" placeholder="Rechercher un titre…" autocomplete="off" aria-label="Rechercher un titre">
+    <kbd class="kbd" aria-hidden="true">/</kbd>
+    <button type="submit" class="btn btn-primary">Rechercher</button>
+  </form>
+
+  <div class="header-actions">
+    <span id="dryrun-flag" class="chip danger hidden" title="Aucune écriture réelle">simulation</span>
+    <button id="adult-chip" class="btn icon-btn adult-chip hidden" type="button" aria-label="Médias adultes affichés : cliquer pour les masquer" title="Médias adultes affichés dans ce navigateur : cliquer pour les masquer"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 7.7-1.5"/></svg></button>
+    <button id="jobs-indicator" class="btn btn-ghost hidden" type="button" aria-label="Opérations en cours">
+      <span class="pulse" aria-hidden="true"></span><span id="jobs-count">0</span>
+    </button>
+    <button id="tab-log-btn" class="btn btn-ghost" type="button" aria-label="Journal des opérations">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h8l4 4v14H7z"/><path d="M9.5 12h6M9.5 16h6"/></svg><span class="label-text">Journal</span>
+    </button>
+    <button id="tab-settings-btn" class="btn btn-ghost" type="button" aria-label="Réglages">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="label-text">Réglages</span>
+    </button>
+  </div>
+</header>
+
+<!-- ================================================================ -->
+<main class="app-main">
+
+  <section id="stats" class="stats" aria-label="Résumé de la sélection" hidden></section>
+
+  <div class="toolbar" aria-label="Filtres et tri">
+    <div class="seg" id="plex-seg" role="group" aria-label="Statut Plex">
+      <button class="seg-btn is-active" data-plex="all" type="button">Tous</button>
+      <button class="seg-btn" data-plex="watched" type="button">Vus</button>
+      <button class="seg-btn" data-plex="unwatched" type="button">Non vus</button>
+      <button class="seg-btn" data-plex="partial" type="button" data-mt="series">En cours</button>
+    </div>
+
+    <label class="select-wrap" data-mt="films series">
+      <span>Genre</span>
+      <select id="filter-genre" aria-label="Filtrer par genre"></select>
+    </label>
+
+    <label class="select-wrap" data-mt="films">
+      <span>Qualité</span>
+      <select id="filter-quality" aria-label="Filtrer par qualité"></select>
+    </label>
+
+    <label class="select-wrap">
+      <span>Ajouté</span>
+      <select id="filter-added" aria-label="Filtrer par date d'ajout">
+        <option value="all">Toujours</option>
+        <option value="7">7 derniers jours</option>
+        <option value="30">30 derniers jours</option>
+        <option value="90">90 derniers jours</option>
+        <option value="365">Cette année (1 an)</option>
+      </select>
+    </label>
+
+    <label class="select-wrap" data-mt="films series">
+      <span>Infos TMDB</span>
+      <select id="filter-tmdb" aria-label="Filtrer par infos TMDB">
+        <option value="all">Toutes</option>
+        <option value="without">Sans infos TMDB</option>
+        <option value="with">Avec infos TMDB</option>
+      </select>
+    </label>
+
+    <button id="reset-filters" class="btn btn-link hidden" type="button">Réinitialiser</button>
+
+    <span class="toolbar-spacer"></span>
+
+    <label class="select-wrap">
+      <span>Trier</span>
+      <select id="sort-select" aria-label="Trier par"></select>
+    </label>
+    <button id="sort-dir" class="btn btn-ghost icon-btn" type="button" aria-label="Inverser l'ordre de tri" title="Inverser l'ordre">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M3.5 7.5 7 4l3.5 3.5M17 20V4m-3.5 16.5L17 20l3.5-3.5"/></svg>
+    </button>
+    <div class="seg" id="view-seg" role="group" aria-label="Affichage">
+      <button class="seg-btn" data-view="grid" type="button" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg><span>Grille</span>
+      </button>
+      <button class="seg-btn" data-view="list" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg><span>Liste</span>
+      </button>
+      <button class="seg-btn" data-view="sagas" data-mt="films" type="button" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="17" r="2.5"/><path d="M8 8.5 11 15M16 8.5 13 15"/></svg><span>Sagas</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="results-meta">
+    <label class="check-all">
+      <input type="checkbox" id="select-all" aria-label="Tout sélectionner (éléments affichés)">
+      <span id="results-count">Aucune recherche</span>
+    </label>
+    <span class="plex-line">
+      <span id="plex-status" class="muted"></span>
+      <button id="plex-refresh-btn" class="btn btn-link" type="button">↻ Actualiser Plex</button>
+    </span>
+  </div>
+
+  <div class="content">
+
+    <!-- ------------------------------------------------------------ -->
+    <section class="results" aria-live="polite">
+      <div id="results-grid" class="grid"></div>
+      <div id="results-list" class="table-wrap hidden">
+        <table class="list">
+          <thead id="list-head"></thead>
+          <tbody id="list-body"></tbody>
+        </table>
+      </div>
+      <div id="empty-state" class="empty hidden"></div>
+      <div id="sagas-panel" class="sagas hidden" data-sagas-panel aria-live="polite"></div>
+    </section>
+
+    <!-- ------------------------------------------------------------ -->
+    <aside id="side" class="side" aria-label="Actions">
+      <div class="sheet-handle">
+        <span class="grab" aria-hidden="true"></span>
+        <button id="sheet-close" class="btn btn-ghost small" type="button">Fermer</button>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Sélection</h2>
+        <div class="sel-summary">
+          <div><span class="label">Éléments</span><span id="sel-count" class="big">0</span></div>
+          <div><span class="label">Taille</span><span id="sel-size" class="big">0 o</span></div>
+        </div>
+
+        <div id="mode-block" class="field-block" data-mt="films ebooks">
+          <span class="field-label">Éléments à traiter</span>
+          <label class="radio"><input type="radio" name="mode" value="files" checked> Fichiers sélectionnés uniquement</label>
+          <label class="radio"><input type="radio" name="mode" value="parents"> Dossiers parents complets (si dédiés)</label>
+        </div>
+
+        <div id="plan-warnings" class="warnings hidden"></div>
+
+        <div class="field-block">
+          <span class="field-label">Action</span>
+          <div class="action-buttons">
+            <button id="action-copy" class="btn action copy" type="button" disabled>Copier</button>
+            <button id="action-move" class="btn action move" type="button" disabled>Déplacer</button>
+            <button id="action-delete" class="btn action delete" type="button" disabled>Supprimer</button>
+          </div>
+        </div>
+
+        <div class="field-block" data-mt="films series ebooks">
+          <span class="field-label">Sauvegarde</span>
+          <button id="action-1f" class="btn action cloud" type="button" disabled>Envoyer sur 1fichier</button>
+          <p class="muted small">Une archive chiffrée par élément : un film ou une série entière, ou le dossier qui contient les ebooks. Les fichiers locaux ne sont pas supprimés.</p>
+        </div>
+
+        <div class="field-block" data-mt="films series">
+          <span class="field-label">Libérer de la place</span>
+          <button id="select-watched" class="btn btn-ghost small" type="button">Sélectionner les vus</button>
+          <p class="muted small">Sélectionne les éléments marqués vus dans Plex (parmi ceux affichés). Ensuite, choisis à la sauvegarde : 1fichier seul, 1fichier + disque, ou disque seul (bouton Déplacer). La copie locale n'est retirée qu'après vérification.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Destination</h2>
+        <div id="destination-block" class="dest-block">
+          <select id="destination-select" aria-label="Disque de destination">
+            <option value="__manual__">Autre chemin (saisie manuelle)…</option>
+          </select>
+          <button id="disks-refresh-btn" class="btn btn-ghost icon-btn" type="button" aria-label="Rafraîchir les disques">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+          </button>
+          <input id="destination-manual" type="text" class="hidden" placeholder="/media/devmon/MonDisque" aria-label="Chemin de destination">
+          <p id="destination-space" class="muted small"></p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Opérations en cours</h2>
+        <div id="jobs-list" class="jobs-list">
+          <p class="muted small empty-msg">Aucune opération en cours.</p>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ============================================================ -->
+  <section id="of-view" class="of-view hidden" aria-label="Bibliothèque 1fichier">
+    <header class="of-head">
+      <div class="of-head-text">
+        <span class="eyebrow">Sauvegarde premium</span>
+        <h2>Bibliothèque 1fichier</h2>
+        <p id="of-sub" class="muted small"></p>
+      </div>
+      <div class="of-head-actions">
+        <button id="of-refresh-meta" class="btn btn-ghost small" type="button">Actualiser les fiches</button>
+        <button id="of-settings" class="btn btn-ghost small" type="button">Réglages 1fichier</button>
+      </div>
+    </header>
+
+    <div id="of-stats" class="stats" aria-label="Résumé de la bibliothèque 1fichier"></div>
+    <div id="of-cache" class="of-cache hidden" role="status">
+      <span id="of-cache-text"></span>
+      <button id="of-cache-clear" class="btn btn-ghost small" type="button">Vider le cache</button>
+    </div>
+
+    <div class="of-toolbar" role="search">
+      <input id="of-search" type="search" placeholder="Filtrer par titre, auteur, année…" aria-label="Filtrer par titre, auteur ou année" autocomplete="off">
+      <button id="of-sagas-btn" class="btn btn-ghost small" type="button" aria-pressed="false">Sagas</button>
+      <select id="of-kind" aria-label="Type">
+        <option value="all">Films, séries, ebooks</option>
+        <option value="film">Films</option>
+        <option value="serie">Séries</option>
+        <option value="ebook">Ebooks</option>
+      </select>
+      <select id="of-status" aria-label="Statut">
+        <option value="all">Tous les statuts</option>
+        <option value="restored">Déjà restaurés</option>
+        <option value="pending">Envois incomplets</option>
+      </select>
+      <select id="of-tmdb" aria-label="Infos TMDB">
+        <option value="all">Toutes les infos TMDB</option>
+        <option value="without">Sans infos TMDB</option>
+        <option value="with">Avec infos TMDB</option>
+      </select>
+      <select id="of-genre" aria-label="Genre"><option value="">Tous les genres</option></select>
+      <select id="of-sort" aria-label="Trier par">
+        <option value="title">Titre</option>
+        <option value="year">Année</option>
+        <option value="rating">Note</option>
+        <option value="runtime">Durée</option>
+        <option value="size">Taille</option>
+        <option value="sent">Date d'envoi</option>
+      </select>
+      <button id="of-sort-dir" class="btn btn-ghost icon-btn" type="button" aria-label="Inverser l'ordre de tri" title="Inverser l'ordre">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4"/></svg>
+      </button>
+    </div>
+
+    <div id="of-sagas" class="sagas hidden" data-sagas-panel aria-live="polite"></div>
+    <section id="of-pending" class="of-pending hidden" aria-label="Envois incomplets"></section>
+    <div id="of-grid" class="of-grid"></div>
+    <div id="of-empty" class="empty hidden"></div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section id="disk-view" class="of-view disk-view hidden" aria-label="Disques de sauvegarde">
+    <header class="of-head">
+      <div class="of-head-text">
+        <span class="eyebrow">Sauvegarde locale</span>
+        <h2>Disques de sauvegarde</h2>
+        <p id="disk-sub" class="muted small"></p>
+      </div>
+      <div class="of-head-actions">
+        <button id="disk-refresh" class="btn btn-ghost small" type="button">Rafraîchir les disques</button>
+      </div>
+    </header>
+
+    <div id="disk-cards" class="disk-cards" aria-label="Disques de sauvegarde"></div>
+
+    <div class="disk-toolbar" role="search">
+      <div class="seg disk-kind" role="group" aria-label="Type de média sur le disque">
+        <button type="button" class="seg-btn is-active" data-disk-kind="films" aria-pressed="true">Films</button>
+        <button type="button" class="seg-btn" data-disk-kind="series" aria-pressed="false">Séries</button>
+        <button type="button" class="seg-btn" data-disk-kind="ebooks" aria-pressed="false">Ebooks</button>
+        <button type="button" class="seg-btn hidden" data-disk-kind="adultes" aria-pressed="false">Adultes</button>
+      </div>
+      <input id="disk-search" type="search" placeholder="Filtrer par nom…" aria-label="Filtrer par nom" autocomplete="off">
+      <select id="disk-disk" aria-label="Disque">
+        <option value="all">Tous les disques</option>
+      </select>
+      <select id="disk-tmdb" aria-label="Infos TMDB">
+        <option value="all">Toutes les infos TMDB</option>
+        <option value="without">Sans infos TMDB</option>
+        <option value="with">Avec infos TMDB</option>
+      </select>
+      <button id="disk-sagas-btn" class="btn btn-ghost small" type="button" aria-pressed="false">Sagas</button>
+      <button id="disk-select-all" class="btn btn-ghost small" type="button">Tout sélectionner</button>
+    </div>
+
+    <div id="disk-banner" class="disk-banner hidden" role="status"></div>
+    <p id="disk-scope" class="disk-scope muted small hidden" role="status"></p>
+    <div id="disk-sagas" class="sagas hidden" data-sagas-panel aria-live="polite"></div>
+    <div id="disk-list" class="of-grid disk-grid" aria-label="Éléments des disques"></div>
+    <div id="disk-empty" class="empty hidden"></div>
+    <section id="disk-everywhere" class="disk-everywhere hidden" aria-label="Résultats sur l'ensemble des disques">
+      <h3 id="disk-everywhere-title" class="of-section-title"></h3>
+      <ul id="disk-everywhere-list" class="disk-everywhere-list"></ul>
+    </section>
+
+    <section id="disk-transfers" class="disk-transfers" aria-label="Transferts en cours">
+      <h3 class="of-section-title">Transferts</h3>
+      <div id="disk-transfers-list" class="jobs-list">
+        <p class="muted small empty-msg">Les copies, déplacements, envois 1fichier et suppressions lancés depuis cet onglet apparaissent ici avec leur progression.</p>
+      </div>
+    </section>
+
+    <div id="disk-actions" class="disk-actions hidden" role="region" aria-label="Actions sur la sélection">
+      <div class="disk-actions-text">
+        <strong id="disk-sel-count">0</strong> sélectionné(s) <span class="muted" id="disk-sel-size"></span>
+      </div>
+      <div class="disk-actions-row">
+        <label class="disk-field">
+          <span class="label">Dossier serveur</span>
+          <select id="disk-server-dir" aria-label="Dossier serveur de destination"></select>
+        </label>
+        <button id="disk-category" class="btn action move hidden" type="button">Déplacer vers Adultes</button>
+        <button id="disk-copy" class="btn action copy" type="button" disabled>Copier vers le serveur</button>
+        <button id="disk-move" class="btn action move" type="button" disabled>Déplacer vers le serveur</button>
+      </div>
+      <div class="disk-actions-row">
+        <button id="disk-1f" class="btn action cloud" type="button" disabled>Envoyer sur 1fichier</button>
+        <label class="disk-check" id="disk-1f-remove-label">
+          <input id="disk-1f-remove" type="checkbox"> Retirer du disque après sauvegarde vérifiée
+        </label>
+        <button id="disk-delete" class="btn action delete" type="button" disabled>Supprimer du disque</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ================================================================ -->
+<div id="selbar" class="selbar hidden" role="region" aria-label="Sélection en cours">
+  <div class="selbar-text">
+    <strong id="selbar-count">0</strong> sélectionné(s) <span class="muted" id="selbar-size"></span>
+  </div>
+  <button id="selbar-clear" class="btn btn-ghost" type="button">Vider</button>
+  <button id="selbar-open" class="btn btn-primary" type="button">Actions</button>
+</div>
+
+<div id="backdrop" class="backdrop hidden"></div>
+
+<!-- ================================================================ -->
+<aside id="detail-drawer" class="drawer detail hidden" role="dialog" aria-modal="true" aria-labelledby="detail-title">
+  <div class="drawer-bar">
+    <button id="detail-prev" class="btn btn-ghost icon-btn" type="button" aria-label="Élément précédent">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+    </button>
+    <button id="detail-next" class="btn btn-ghost icon-btn" type="button" aria-label="Élément suivant">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    <span class="grow"></span>
+    <button id="detail-close" class="btn btn-ghost" type="button">Fermer</button>
+  </div>
+  <div id="detail-body" class="drawer-body"></div>
+</aside>
+<aside id="person-drawer" class="drawer detail person hidden" role="dialog" aria-modal="true" aria-label="Fiche de la personne">
+  <div class="drawer-bar">
+    <button id="person-back" class="btn btn-ghost" type="button">← Retour</button>
+    <span class="grow"></span>
+    <button id="person-close" class="btn btn-ghost" type="button">Fermer</button>
+  </div>
+  <div id="person-body" class="drawer-body" aria-live="polite"></div>
+</aside>
+
+<div id="log-drawer" class="drawer side-drawer hidden" role="dialog" aria-modal="true" aria-labelledby="log-title">
+  <div class="drawer-bar">
+    <h2 id="log-title">Journal des opérations</h2>
+    <span class="grow"></span>
+    <button id="log-close-btn" class="btn btn-ghost" type="button">Fermer</button>
+  </div>
+  <div id="log-content" class="drawer-body log-content"></div>
+</div>
+
+<aside id="of-drawer" class="drawer detail hidden" role="dialog" aria-modal="true" aria-labelledby="of-drawer-title">
+  <div class="drawer-bar">
+    <span class="grow"></span>
+    <button id="of-drawer-close" class="btn btn-ghost" type="button">Fermer</button>
+  </div>
+  <div id="of-drawer-body" class="drawer-body"></div>
+</aside>
+
+<div id="settings-drawer" class="drawer side-drawer wide hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="drawer-bar">
+    <h2 id="settings-title">Réglages</h2>
+    <span class="grow"></span>
+    <button id="settings-close-btn" class="btn btn-ghost" type="button">Fermer</button>
+  </div>
+
+  <div class="drawer-body settings-content">
+    <p class="muted small settings-note">
+      Un chemin ne peut être utilisé que s'il est déjà visible à l'intérieur
+      du conteneur (monté via <code>docker-compose.yml</code>). Utilise
+      « Vérifier » pour tester un chemin avant de l'enregistrer.
+    </p>
+
+    <fieldset>
+      <legend>Dossiers sources</legend>
+      <label class="field"><span>Films (un chemin par ligne)</span><textarea id="set-source-films" rows="3"></textarea></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" data-check-target="set-source-films">Vérifier les chemins</button><span class="path-check-result muted small"></span></div>
+      <label class="field"><span>Séries (un chemin par ligne)</span><textarea id="set-source-series" rows="3"></textarea></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" data-check-target="set-source-series">Vérifier les chemins</button><span class="path-check-result muted small"></span></div>
+      <label class="field"><span>Ebooks (un chemin par ligne)</span><textarea id="set-source-ebooks" rows="3"></textarea></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" data-check-target="set-source-ebooks">Vérifier les chemins</button><span class="path-check-result muted small"></span></div>
+      <label class="field"><span>Films adultes (un chemin par ligne, facultatif : classés à part, voir Comportement)</span><textarea id="set-source-adultes" rows="2"></textarea></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" data-check-target="set-source-adultes">Vérifier les chemins</button><span class="path-check-result muted small"></span></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Destination</legend>
+      <label class="field"><span>Sous-dossier films (relatif, sans « / » au début)</span><input type="text" id="set-dest-subdir-films" placeholder="MEDIA/FILMS"></label>
+      <label class="field"><span>Sous-dossier séries (relatif, sans « / » au début)</span><input type="text" id="set-dest-subdir-series" placeholder="MEDIA/SERIES"></label>
+      <label class="field"><span>Sous-dossier ebooks (relatif, sans « / » au début)</span><input type="text" id="set-dest-subdir-ebooks" placeholder="MEDIA/EBOOKS"></label>
+      <label class="field"><span>Sous-dossier films adultes sur disque (relatif, vide = avec les films)</span><input type="text" id="set-dest-subdir-adultes" placeholder="MEDIA/ADULTE"></label>
+      <label class="field"><span>Racines scannées pour détecter les disques (une par ligne)</span><textarea id="set-scan-roots" rows="2"></textarea></label>
+      <label class="field"><span>Marge de sécurité (Mo)</span><input type="number" id="set-safety-margin" min="0" step="10"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Détection des fichiers</legend>
+      <label class="field"><span>Extensions vidéo (séparées par des virgules)</span><input type="text" id="set-video-extensions"></label>
+      <label class="field"><span>Extensions ebook (séparées par des virgules)</span><input type="text" id="set-ebook-extensions"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Plex</legend>
+      <p class="muted small settings-note">Fournit le statut vu/non vu, la progression des séries, la date d'ajout et la dernière lecture — propres à TA médiathèque.</p>
+      <label class="field"><span>URL du serveur Plex</span><input type="text" id="set-plex-url" placeholder="http://192.168.1.10:32400"></label>
+      <label class="field"><span>Token Plex</span><input type="password" id="set-plex-token" autocomplete="off"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>TMDB (jaquettes, résumés, genres, notes, années)</legend>
+      <p class="muted small settings-note">
+        Pour les films ET les séries que Plex ne reconnaît pas (ou si Plex n'est pas configuré). Clé gratuite sur
+        <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>.
+      </p>
+      <label class="field"><span>Clé API TMDB</span><input type="password" id="set-tmdb-key" autocomplete="off" placeholder="a1b2c3d4e5f6..."></label>
+      <label class="field"><span>Langue des résumés et genres</span>
+        <select id="set-tmdb-lang"><option value="fr-FR">Français</option><option value="en-US">Anglais</option></select>
+      </label>
+    </fieldset>
+
+    <fieldset id="transfer-fieldset">
+      <legend>Plages de transfert et vitesse</legend>
+      <p class="muted small settings-note">
+        Envois et restaurations 1fichier, copies vers disque : un élément ne <strong>démarre</strong> que pendant
+        une plage activée, la file attend hors plage. Un envoi 1fichier déjà commencé va jusqu'au bout ; une copie
+        disque est <strong>suspendue</strong> hors plage et reprise à la plage suivante. Une seule copie à la fois par
+        disque. La vitesse de la plage active s'applique (0 = illimité). Heures du serveur : variable <code>TZ</code>
+        (ex. Europe/Paris).
+        Sans plage activée, les transferts sont en pause. Priorité par défaut : normal (réglable sur chaque tâche).
+      </p>
+      <p id="set-tw-status" class="path-check-result muted small" aria-live="polite"></p>
+      <div id="set-tw-list" class="tw-list"></div>
+      <div class="path-check-row">
+        <button type="button" class="btn btn-ghost small" id="set-tw-add">Ajouter une plage</button>
+        <button type="button" class="btn btn-ghost small" id="set-tw-defaults">Rétablir Jour et Nuit</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>1fichier (sauvegarde premium)</legend>
+      <p class="muted small settings-note">
+        Clé API dans ton compte 1fichier (section API). Chaque film, série ou dossier d'ebooks part en archive
+        7z chiffrée (AES-256) dans son dossier : <code>tmdb-&lt;id&gt;</code> pour un film,
+        <code>tmdb-tv-&lt;id&gt;</code> pour une série, <code>ebook-&lt;empreinte&gt;</code> pour un ebook,
+        avec son propre mot de passe. Ces mots de passe sont
+        dans le fichier d'index du volume de données : <strong>sauvegarde ce volume</strong>, sans lui les
+        archives ne s'ouvrent plus.
+      </p>
+      <label class="field"><span>Clé API 1fichier</span><input type="password" id="set-1f-key" autocomplete="off" placeholder="Clé API"></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" id="set-1f-test">Tester la connexion</button><span id="set-1f-test-result" class="path-check-result muted small" aria-live="polite"></span></div>
+      <label class="field"><span>Dossier de travail (archives temporaires : prévoir la taille d'un film, chemin absolu monté dans le conteneur)</span><input type="text" id="set-1f-staging" placeholder="/MVE/TMP" autocomplete="off"></label>
+      <label class="field"><span>Compression 7z (0 = aucune, conseillé pour la vidéo ; 9 = maximum, très lent)</span><input type="number" id="set-1f-compression" min="0" max="9" step="1"></label>
+      <p class="muted small settings-note">
+        <strong>Restauration</strong> : dossiers où remettre les éléments récupérés depuis 1fichier
+        (chemins absolus, montés dans le conteneur). Vide = pas de dossier par défaut.
+      </p>
+      <label class="field"><span>Dossier de restauration des films</span><input type="text" id="set-rd-films" placeholder="/MVE/MEDIA/VRAC/FILMS" autocomplete="off"></label>
+      <label class="field"><span>Dossier de restauration des séries</span><input type="text" id="set-rd-series" placeholder="/MVE/MEDIA/VRAC/SERIES" autocomplete="off"></label>
+      <label class="field"><span>Dossier de restauration des ebooks</span><input type="text" id="set-rd-ebooks" placeholder="/MVE/MEDIA/VRAC/EBOOKS" autocomplete="off"></label>
+      <p class="muted small settings-note">
+        <strong>Copie de l'index</strong> : l'index contient le mot de passe de chaque archive. Il est sauvegardé
+        automatiquement (copies dans <code>1fichier-index.json.backups/</code>, à côté de l'index). Pour une copie
+        <strong>hors du serveur</strong>, exporte-le ci-dessous : archive 7z chiffrée, téléchargée dans ton navigateur.
+        La phrase de passe n'est enregistrée nulle part : note-la.
+      </p>
+      <p id="set-1f-index-status" class="path-check-result muted small" aria-live="polite"></p>
+      <label class="field"><span>Phrase de passe de l'export (12 caractères minimum)</span><input type="password" id="set-1f-export-pass" autocomplete="new-password"></label>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" id="set-1f-export">Exporter l'index chiffré (.7z)</button><span id="set-1f-export-result" class="path-check-result muted small" aria-live="polite"></span></div>
+      <p class="muted small settings-note">
+        <strong>Contrôles automatiques</strong> : chaque nuit, tous les liens sont vérifiés, et un élément
+        (archive de 20 Go au plus) est téléchargé et testé une fois par mois. L'heure se règle avec la variable
+        <code>ONEFICHIER_CHECK_HOUR</code> (3 par défaut).
+      </p>
+      <p id="set-1f-checks-status" class="path-check-result muted small" aria-live="polite"></p>
+      <div class="path-check-row"><button type="button" class="btn btn-ghost small" id="set-1f-checks-run">Lancer les contrôles maintenant</button><span id="set-1f-checks-result" class="path-check-result muted small" aria-live="polite"></span></div>
+      <label class="field"><span>Alertes : URL ntfy ou webhook Discord (facultatif, vide = aucune alerte)</span><input type="password" id="set-1f-notify" autocomplete="off" placeholder="https://ntfy.sh/mon-sujet"></label>
+      <label class="field"><span>Copie de chaque archive sur un disque externe (dossier absolu monté, facultatif : deuxième copie, utilisée si 1fichier ne répond pas)</span><input type="text" id="set-1f-archive-copy" placeholder="/MVE/MEDIA/ARCHIVES-1FICHIER" autocomplete="off"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Comportement</legend>
+      <label class="check-row"><input type="checkbox" id="set-dry-run"><span>Mode simulation (dry-run) : aucune écriture réelle</span></label>
+            <div class="adult-access">
+        <p id="adult-status" class="adult-status" aria-live="polite">Médias adultes : masqués.</p>
+        <div class="path-check-row">
+          <button type="button" class="btn btn-ghost small" id="adult-code-btn">Créer le code</button>
+          <button type="button" class="btn btn-ghost small hidden" id="adult-lock-btn">Verrouiller</button>
+        </div>
+        <p class="muted small settings-note">
+          Le code est vérifié par le serveur et enregistré sous forme d'empreinte, jamais affiché. Tant qu'un
+          navigateur n'a pas saisi le code, les médias adultes restent masqués partout, y compris dans les
+          listes, les fiches et les actions. Le déverrouillage vaut pour ce navigateur, jusqu'à sa fermeture (24 h au plus).
+        </p>
+      </div>
+      <label class="field"><span>Texte de confirmation pour une suppression</span><input type="text" id="set-delete-confirm"></label>
+    </fieldset>
+
+    <div class="settings-actions">
+      <button id="settings-reset-btn" class="btn btn-ghost" type="button">Réinitialiser (valeurs .env)</button>
+      <button id="settings-save-btn" class="btn btn-primary" type="button">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ -->
+<div id="confirm-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal">
+    <h3 id="confirm-title">Confirmer l'opération</h3>
+    <p id="confirm-body"></p>
+    <fieldset id="confirm-after" class="hidden">
+      <legend>Après la sauvegarde sur 1fichier</legend>
+      <label class="radio"><input type="radio" name="confirm-after" value="keep" checked> Garder la copie sur le serveur</label>
+      <label class="radio"><input type="radio" name="confirm-after" value="delete"> Libérer le serveur : supprimer la copie locale</label>
+      <label class="radio"><input type="radio" name="confirm-after" value="move"> Libérer le serveur : copier aussi sur le disque sélectionné</label>
+    </fieldset>
+    <fieldset id="confirm-seasons" class="hidden">
+      <legend>Que envoyer ?</legend>
+      <label class="radio"><input type="radio" name="confirm-scope" value="seasons" checked> Saisons choisies (une archive par saison, recommandé)</label>
+      <label class="radio"><input type="radio" name="confirm-scope" value="whole"> Série entière (une seule archive, très volumineuse)</label>
+      <div id="confirm-season-list" class="confirm-season-list"></div>
+    </fieldset>
+    <input id="confirm-delete-input" type="text" class="hidden" placeholder="SUPPRIMER" autocomplete="off" spellcheck="false" aria-label="Texte de confirmation">
+    <div class="modal-actions">
+      <button id="confirm-cancel" class="btn btn-ghost" type="button">Annuler</button>
+      <button id="confirm-ok" class="btn btn-primary" type="button">Confirmer</button>
+    </div>
+  </div>
+</div>
+
+<div id="identify-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="identify-title">
+  <div class="modal modal-wide">
+    <h3 id="identify-title">Identifier le titre</h3>
+    <p id="identify-current" class="muted small"></p>
+    <form id="identify-search" class="identify-search">
+      <input id="identify-query" type="text" placeholder="Titre" aria-label="Titre à rechercher" autocomplete="off" spellcheck="false">
+      <input id="identify-year" type="number" min="1888" max="2100" placeholder="Année" aria-label="Année de sortie" inputmode="numeric">
+      <button id="identify-go" class="btn btn-ghost" type="submit">Chercher sur TMDB</button>
+    </form>
+    <p id="identify-status" class="muted small" role="status"></p>
+    <ul id="identify-results" class="identify-results"></ul>
+    <label class="identify-new" for="identify-name">Nouveau nom du dossier ou du fichier</label>
+    <div class="identify-name-row">
+      <input id="identify-name" type="text" autocomplete="off" spellcheck="false" placeholder="Titre (année)">
+      <span id="identify-ext" class="identify-ext" aria-hidden="true"></span>
+    </div>
+    <label id="identify-rename-row" class="check-row hidden"><input type="checkbox" id="identify-rename-file"><span>Renommer aussi le fichier sur le serveur. Plex devra être actualisé ensuite (Réglages › Plex) ; sans cette case, seul le nom affiché et celui des copies change.</span></label>
+    <label id="identify-adult-row" class="check-row hidden"><input type="checkbox" id="identify-adult"><span>Contenu adulte : la recherche TMDB inclut les titres pour adultes, et la copie part dans le dossier adulte.</span></label>
+    <p id="identify-hint" class="muted small">Format conseillé : <code>Titre (année)</code>. Exemple : Idiocracy (2006).</p>
+    <p id="identify-error" class="identify-error hidden" role="alert"></p>
+    <div class="modal-actions">
+      <button id="identify-cancel" class="btn btn-ghost" type="button">Annuler</button>
+      <button id="identify-ok" class="btn btn-primary" type="button" disabled>Renommer</button>
+    </div>
+  </div>
+</div>
+
+<div id="adult-unlock-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="adult-unlock-title">
+  <form id="adult-unlock-form" class="modal" autocomplete="off">
+    <h3 id="adult-unlock-title">Code d'accès</h3>
+    <p class="muted small">Saisis le code pour afficher les médias adultes dans ce navigateur.</p>
+    <label class="field"><span>Code</span><input id="adult-unlock-code" type="password" autocomplete="off" spellcheck="false" maxlength="200"></label>
+    <p id="adult-unlock-error" class="adult-error hidden" role="alert"></p>
+    <div class="modal-actions">
+      <button id="adult-unlock-cancel" class="btn btn-ghost" type="button">Annuler</button>
+      <button id="adult-unlock-ok" class="btn btn-primary" type="submit">Valider</button>
+    </div>
+  </form>
+</div>
+
+<div id="adult-code-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="adult-code-title">
+  <form id="adult-code-form" class="modal" autocomplete="off">
+    <h3 id="adult-code-title">Créer le code</h3>
+    <p id="adult-code-hint" class="muted small"></p>
+    <label id="adult-code-current-row" class="field hidden"><span>Code actuel</span><input id="adult-code-current" type="password" autocomplete="off" spellcheck="false" maxlength="200"></label>
+    <label class="field"><span>Nouveau code (4 à 64 caractères)</span><input id="adult-code-new" type="password" autocomplete="new-password" spellcheck="false" maxlength="64"></label>
+    <label class="field"><span>Répète le nouveau code</span><input id="adult-code-confirm" type="password" autocomplete="new-password" spellcheck="false" maxlength="64"></label>
+    <p id="adult-code-error" class="adult-error hidden" role="alert"></p>
+    <div class="modal-actions">
+      <button id="adult-code-cancel" class="btn btn-ghost" type="button">Annuler</button>
+      <button id="adult-code-ok" class="btn btn-primary" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</div>
+
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+</div>
+
+<script src="js/core.js?v=20261013-v44"></script>
+<script src="js/list.js?v=20261013-v44"></script>
+<script src="js/person.js?v=20261013-v44"></script>
+<script src="js/shell.js?v=20261013-v44"></script>
+<script src="js/onefichier.js?v=20261013-v44"></script>
+<script src="js/disks.js?v=20261013-v44"></script>
+<script src="js/identify.js?v=20261013-v44"></script>
+<script src="js/jobs.js?v=20261013-v44"></script>
+<script src="js/settings.js?v=20261013-v44"></script>
+<script src="js/app.js?v=20261013-v44"></script>
+</body>
+</html>

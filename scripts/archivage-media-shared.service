@@ -1,0 +1,25 @@
+# Archivage web : rend /media et /mnt « partagés » sur l'hôte à CHAQUE démarrage, avant Docker.
+#
+# Sans cela, un disque monté sur l'hôte après le démarrage du conteneur (ou au démarrage, si /media
+# n'est pas partagé) reste invisible du conteneur : l'interface l'affiche « hors ligne ».
+# `mount --make-rshared /media` seul échoue si /media n'est pas un point de montage. Le service
+# le rend donc d'abord point de montage (bind sur lui-même), puis le passe en partage récursif.
+#
+# Installation (une fois, sur l'hôte) :
+#   sudo cp archivage-media-shared.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now archivage-media-shared.service
+#   docker restart archivage-films        # le conteneur doit être redémarré une fois après l'activation
+
+[Unit]
+Description=Propagation partagée de /media et /mnt pour le conteneur archivage-films
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'set -e; for d in /media /mnt; do mkdir -p "$d"; mountpoint -q "$d" || mount --bind "$d" "$d"; mount --make-rshared "$d"; done'
+
+[Install]
+WantedBy=multi-user.target

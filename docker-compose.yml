@@ -1,0 +1,67 @@
+services:
+  archivage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: archivage-films:latest
+    container_name: archivage-films
+    restart: unless-stopped
+    ports:
+      - "8843:8080"
+    env_file:
+      - .env
+    environment:
+      LOG_FILE: /data/archivage.log
+      SETTINGS_FILE: /data/settings.json
+      # Fuseau horaire : les plages de transfert et l'heure des contrôles 1fichier s'y réfèrent.
+      TZ: ${TZ:-Europe/Paris}
+      # Rapports SMART déposés par l'hôte (voir la section 24 du README).
+      DISK_HEALTH_DIR: /health
+    volumes:
+      # --- Sources -----------------------------------------------------
+      # Montées au MÊME chemin qu'sur l'hôte : ce que tu tapes dans
+      # Réglages (interface web, icône ⚙) correspond alors exactement au
+      # chemin réel sur ta machine, sans traduction à retenir.
+      #
+      # Ajoute une ligne par arborescence à exposer (NAS, dossier "vrac",
+      # partage Freebox...). Montée en :rw : copier, déplacer ET supprimer
+      # fonctionnent depuis cette arborescence (pas de garde-fou lecture
+      # seule ici, choix assumé).
+      - ${HOST_MEDIA_ROOT:-/DATA/Media}:${HOST_MEDIA_ROOT:-/DATA/Media}:rw
+      # - /un/autre/chemin/vers/tes/films:/un/autre/chemin/vers/tes/films:rw
+
+      # --- Destinations (disques externes) ------------------------------
+      # Bind mounts des racines de montage de l'hôte, en lecture/écriture.
+      # `:rslave` permet de voir apparaître un disque branché/monté APRÈS
+      # le démarrage du conteneur, à condition que l'hôte ait rendu ces
+      # points de montage "partagés" AVANT le démarrage de Docker. Cela se
+      # règle une fois pour toutes par le service systemd
+      # scripts/archivage-media-shared.service (section 34 du README).
+      # Ne pas se contenter de `mount --make-rshared /media` : cette commande
+      # échoue si /media n'est pas un point de montage.
+      # Approche la plus simple et la plus sûre : évite --privileged et un
+      # accès brut à /dev, tout en gérant les disques amovibles.
+      - /media:/media:rslave
+      - /mnt:/mnt:rslave
+      # - /run/media:/run/media:rslave
+
+      # --- Dossier de travail 1fichier ----------------------------------
+      # Les archives 7z temporaires (la taille d'un film, parfois plus) passent
+      # ici avant l'envoi. Montée au MÊME chemin que sur l'hôte, comme les
+      # sources. Le dossier doit exister sur l'hôte et avoir de la place libre.
+      # Le chemin est réglable dans Réglages › 1fichier › Dossier de travail.
+      - /MVE/TMP:/MVE/TMP:rw
+
+      # --- Santé des disques (SMART) ------------------------------------
+      # Dossier rempli PAR L'HÔTE (scripts/disk_health.py, lancé chaque jour par un timer).
+      # Monté en LECTURE SEULE : le conteneur lit les rapports, il ne touche jamais à /dev.
+      - ${HOST_HEALTH_DIR:-/var/lib/archivage-health}:/health:ro
+
+      # --- Données persistantes -----------------------------------------
+      # Journal des opérations ET réglages enregistrés depuis l'interface
+      # (dossiers sources, Plex, etc.) : survivent à un `docker compose
+      # up --build` / redémarrage du conteneur.
+      - archivage-data:/data
+
+volumes:
+  archivage-data:
