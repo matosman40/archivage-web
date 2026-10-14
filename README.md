@@ -2145,3 +2145,46 @@ Chaque règle se lit comme une phrase dans la liste, et le formulaire affiche ce
 Les règles invalides sont refusées avec un message clair (action indisponible, confirmation manquante, 1fichier ou notification non configurés, action qui retire un fichier placée avant une autre).
 
 **Vérification.** `backend/tests/test_v47_automatisations.py` contient 37 tests : déclenchement, absence de rétroactivité, filtres, essais, ordre des actions, simulation, nuit, validation, persistance, boucle, API et protection par jeton. Deux tests de bout en bout passent par les routes réelles : une copie réelle sur un disque, et un envoi 1fichier simulé (compression et réseau remplacés, index réel).
+
+## 39. Dossiers par disque, déplacement dans le disque, suivi des transferts (version 48)
+
+Trois ajouts à l'onglet **Disques**, et un suivi commun à toutes les copies et tous les déplacements.
+
+**Dossier de destination par disque.** Chaque disque connecté affiche ses dossiers de destination (films, séries, ebooks) et le bouton **Choisir les dossiers**. La fenêtre permet de parcourir les sous-dossiers du disque, de choisir celui où les copies du type sont rangées, de créer un sous-dossier et de le choisir d'un coup, ou de revenir au dossier global de Réglages. Un dossier propre à un disque ne vaut que pour ce disque : les autres gardent le réglage global. Les copies lancées depuis l'interface et les règles d'automatisation suivent ce choix.
+
+- Le parcours ne sort jamais du disque : un lien symbolique qui mène ailleurs est refusé, la racine du disque n'est pas une destination, et un dossier qui chevauche une source est refusé.
+- Le dossier des adultes n'est ni listé ni proposé sans session déverrouillée.
+- La bibliothèque reconnaît le dossier choisi, sans quoi les copies y seraient invisibles : la fenêtre l'indique.
+
+**Déplacement dans le même disque.** Sélectionne des éléments d'un disque connecté, choisis un autre dossier reconnu du même disque dans **Même disque, autre dossier**, puis **Déplacer dans ce disque**. C'est un renommage du système de fichiers : rien n'est copié ni relu, l'élément garde son identité (même inode), et sa fiche TMDB suit.
+
+- Les dossiers proposés sont ceux que la bibliothèque lit pour ce type : le sous-dossier global et ses noms usuels (MEDIA/FILM, MEDIA/FILMS), le dossier propre au disque, et le dossier adulte avec session. Un élément rangé ailleurs n'apparaîtrait plus dans la liste.
+- Refusé sans rien déplacer : un nom déjà présent dans le dossier cible, un élément qu'une copie ou un déplacement en attente ou en cours utilise, un élément sur un autre volume, une sélection mêlant plusieurs types ou plusieurs disques.
+- Refusé avec `ALLOW_DELETE=false` (403) : le déplacement retire l'élément de son dossier d'origine. La recatégorisation Adultes existante n'est pas soumise à ce réglage ; elle reste inchangée.
+- En simulation (`DRY_RUN=true`), la réponse indique ce qui serait déplacé, sans rien toucher ni rien consigner.
+
+**Suivi des copies et déplacements.** Une section **Suivi des copies et déplacements** sous les transferts liste chaque élément : copie, déplacement vers un disque ou depuis un disque, déplacement dans le même disque, avec son état (en cours, terminé, erreur, ignoré, partiel, interrompu), le chemin source et le chemin de destination, la date et le détail. Le filtre **Afficher** distingue tout, en cours, terminés et problèmes. Une copie terminée indique qu'elle est vérifiée par empreintes SHA-256 (et que la source a été retirée, pour un déplacement).
+
+- Le suivi est enregistré dans `disk-moves.json`, à côté de `settings.json`, et survit au redémarrage. 500 entrées au plus ; les plus anciennes terminées partent en premier, jamais un transfert en cours.
+- Au démarrage, un transfert resté « en cours » passe à **Interrompu** ; si sa tâche reprend (version 46), son état est remis à jour.
+- Les transferts touchant un film adulte sont retirés du suivi sans session déverrouillée : ni nom, ni compte.
+- En simulation, rien n'est consigné.
+- **Effacer l'historique terminé** retire les entrées terminées ; les transferts en cours restent.
+
+**Routes.**
+
+- `GET /api/disks/folders?path=…&folder=…` : sous-dossiers d'un disque connecté (lecture libre) ;
+- `PUT /api/disks/folder` : dossier de destination d'un type pour un disque (`folder` vide = dossier global, `create` pour créer) ;
+- `POST /api/disk-library/move` : déplacement dans le même disque (`paths`, `folder`) ;
+- `GET /api/disk-moves?status=…&limit=…` : suivi (lecture libre, adultes masqués sans session) ;
+- `POST /api/disk-moves/clear` : efface l'historique terminé.
+
+Les routes qui modifient (`PUT`, `POST`) sont protégées par `ACCESS_TOKEN` (section 37).
+
+**Limites.**
+
+- Un déplacement dans le même disque ne peut viser qu'un dossier que la bibliothèque reconnaît. Un sous-dossier libre (par exemple `MEDIA/FILM/Action`) n'est pas proposé : la bibliothèque ne lit que les dossiers MEDIA, et lui en faire lire un de plus profond demanderait de revoir la détection des séries et des saisons. À traiter dans une version suivante si tu en as besoin.
+- Le suivi ne garde pas la taille des éléments, et n'a pas d'historique avant la version 48.
+- Les transferts vers 1fichier ne passent pas par ce suivi : ils ont leur propre index (section 37).
+
+**Vérification.** `backend/tests/test_v48_dossiers_suivi.py` contient 53 tests : validation des dossiers par disque, parcours (liens sortants, dossier adulte masqué), choix du dossier et création, déplacement dans le disque (renommage sans copie, collisions, tâches en cours, autre volume, simulation, types mêlés, `ALLOW_DELETE`, session adulte), suivi (événements de copie, erreurs, ignorés, nom renommé, adultes masqués, simulation, filtres, plafond, interruption au démarrage, effacement), copie réelle par rsync avec trace vérifiée, et protection par jeton des routes qui modifient. Dix garde-fous ont été retirés un à un dans une copie : la suite échoue à chaque fois. Un parcours navigateur (Chromium, disque simulé) vérifie la fenêtre des dossiers, le déplacement avec confirmation, le suivi et l'absence de défilement horizontal sur téléphone.

@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import adult_auth, adult_media, config, disk_health, disk_integrity, disk_library, disk_meta, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb, workflows
+from . import adult_auth, adult_media, config, disk_health, disk_integrity, disk_layout, disk_library, disk_meta, disk_moves, disks, ebooks as ebooks_mod, hosts, jobs, media, onefichier, plex, scan_cache, scheduler, security, tmdb, workflows
 from . import series as series_mod
 from .logs import log_action, read_log
 from .naming import guess_title_year
@@ -136,13 +136,6 @@ class DiskForgetRequest(BaseModel):
 class DiskRenameRequest(BaseModel):
     path: str                          # élément d'un disque connecté (enfant direct MEDIA/…)
     new_name: str                      # nouveau nom, sans chemin ; l'extension d'origine est gardée
-
-
-DEST_SUBDIR_BY_TYPE = {
-    "films": lambda: config.settings.dest_subdir_films,
-    "series": lambda: config.settings.dest_subdir_series,
-    "ebooks": lambda: config.settings.dest_subdir_ebooks,
-}
 
 
 def _size_of(path: str) -> int:
@@ -428,6 +421,8 @@ async def _arreter_transferts_proprement() -> None:
 @app.on_event("startup")
 async def _reprendre_taches_en_attente() -> None:
     # Copies, déplacements et suppressions non terminés avant l'arrêt du serveur (version 45).
+    # Le suivi (version 48) marque d'abord « interrompu » ce qui était en cours ; la reprise le remet à jour.
+    disk_moves.marquer_interrompus()
     for job in jobs.restore_pending():
         _launch(job)
 
@@ -759,7 +754,8 @@ async def create_job(req: JobRequest, unlocked: bool = Depends(adult_unlocked)):
         if security.is_under_source_dirs(dest_root):
             raise HTTPException(403, "La destination chevauche un dossier source : refusé par sécurité.")
 
-        subdir = DEST_SUBDIR_BY_TYPE[req.media_type]()
+        # Dossier propre à ce disque pour ce type (version 48), sinon le sous-dossier global.
+        subdir = config.settings.subdir_for(dest_root, req.media_type)
         subdir = subdir.strip().strip("/")  # jamais de chemin absolu ici : voir _as_relative_subdir
         # normpath AVANT le contrôle : « disque/../autre » doit être vu comme « autre ».
         destination_full = os.path.normpath(os.path.join(dest_root, subdir))
@@ -1412,6 +1408,19 @@ async def get_disk_library(force: bool = False, unlocked: bool = Depends(adult_u
     for disk in disks_list:  # copies de films adultes masquées tant que l'affichage est désactivé
         if (disk.get("items") or {}).get("films"):
             disk["items"]["films"] = adult_media.filter_visible(disk["items"]["films"], unlocked)
+        root = os.path.normpath(disk["path"])
+        # Dossier de destination effectif de chaque type sur ce disque (version 48). Le dossier adulte
+        # n'est pas proposé sans session : il n'apparaît ni dans la liste ni comme destination.
+        disk["destinations"] = {
+            kind: {
+                "folder": config.settings.subdir_for(root, kind),
+                "custom": kind in (config.settings.disk_folders or {}).get(root, {}),
+            }
+            for kind in config.DISK_FOLDER_KINDS
+        }
+        if not unlocked:
+            disk["subdirs"] = {k: [p for p in v if not adult_media.is_adult_folder(p)]
+                               for k, v in (disk.get("subdirs") or {}).items()}
     return _json_rapide({
         "disks": disks_list,
         "meta_running": meta_running,
@@ -1615,11 +1624,75 @@ def disk_category(req: DiskCategoryRequest, unlocked: bool = Depends(adult_unloc
         except OSError as exc:
             errors.append({"path": old, "error": str(exc)})
             log_action("ECHEC", "CATEGORIE", f"{old} -> {new} ({exc})")
+            disk_moves.record("disk_move", "films", old, new, "erreur", f"Déplacement refusé : {exc}",
+                              adult=req.adult or adult_media.disk_path_is_adult(old, root))
             continue
         disk_library.moved(root, old, new)
         log_action("OK", "CATEGORIE", f"{old} -> {new}")
+        disk_moves.record("disk_move", "films", old, new, "ok", "Déplacé dans le même disque (renommage, sans copie)",
+                          adult=req.adult or adult_media.disk_path_is_adult(old, root))
         moved.append(new)
     return {"ok": not errors, "moved": moved, "errors": errors, "unchanged": len(items) - len(plan)}
+
+
+# ---------------------------------------------------------------------
+# Dossiers des disques, déplacement dans le même disque, suivi (version 48)
+# ---------------------------------------------------------------------
+
+class DiskFolderRequest(BaseModel):
+    path: str                          # racine d'un disque connecté
+    kind: Literal["films", "series", "ebooks"]
+    folder: str = ""                   # dossier relatif à la racine ; vide = sous-dossier global de Réglages
+    create: bool = False               # créer le dossier s'il n'existe pas
+
+
+class DiskMoveRequest(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=200)
+    folder: str                        # dossier MEDIA du MÊME disque, relatif à la racine
+
+
+def _layout_call(fn, *args):
+    try:
+        return fn(*args)
+    except disk_layout.LayoutError as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+@app.get("/api/disks/folders")
+def disk_folders_browse(path: str, folder: str = "", unlocked: bool = Depends(adult_unlocked)):
+    """Sous-dossiers d'un disque connecté, pour choisir le dossier de destination."""
+    return _layout_call(disk_layout.browse, path, folder, unlocked)
+
+
+@app.put("/api/disks/folder")
+def disk_folder_set(req: DiskFolderRequest, unlocked: bool = Depends(adult_unlocked)):
+    """Dossier de destination d'un type pour un disque (vide = retour au dossier global)."""
+    return _layout_call(disk_layout.set_folder, req.path, req.kind, req.folder, req.create, unlocked)
+
+
+@app.post("/api/disk-library/move")
+def disk_move_within(req: DiskMoveRequest, unlocked: bool = Depends(adult_unlocked)):
+    """Déplace des éléments d'un disque connecté vers un autre dossier reconnu du MÊME disque.
+    C'est un renommage : rien n'est copié. Refusé si ALLOW_DELETE est désactivé (le retrait de la
+    source en fait partie) ; en simulation, le plan est renvoyé sans rien déplacer."""
+    if not config.ALLOW_DELETE:
+        raise HTTPException(403, "Déplacement désactivé sur ce serveur (ALLOW_DELETE=false) : il retire l'élément de son dossier.")
+    items, _kinds = _disk_items(req.paths)
+    _disk_items_for_session(items, unlocked)
+    plan = _layout_call(disk_layout.plan_move, items, req.folder, unlocked)
+    return disk_layout.execute_move(plan)
+
+
+@app.get("/api/disk-moves")
+def disk_moves_list(status: str = "tous", limit: int = 200, unlocked: bool = Depends(adult_unlocked)):
+    """Suivi des copies et déplacements (disques et serveur). status : tous, en_cours, terminés, problèmes, ok, erreur…"""
+    return disk_moves.list_entries(status, limit, unlocked)
+
+
+@app.post("/api/disk-moves/clear")
+def disk_moves_clear():
+    """Efface l'historique terminé. Les transferts en cours restent."""
+    return {"removed": disk_moves.clear_finished()}
 
 
 # ---------------------------------------------------------------------

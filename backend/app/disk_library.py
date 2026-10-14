@@ -68,7 +68,9 @@ def kind_dirs(root: str) -> dict[str, list[str]]:
     root = os.path.normpath(root)
     out = {}
     for kind, attr in KIND_SUBDIR_ATTR.items():
-        configured = (getattr(config.settings, attr) or "").strip().strip("/")
+        # Dossier propre à ce disque (version 48) avant le dossier global : les éléments qu'on y range
+        # restent reconnus par la bibliothèque.
+        configured = (config.settings.subdir_for(root, kind) or "").strip().strip("/")
         names = [configured] if configured else []
         names += [n for n in KIND_ALIASES[kind] if n not in names]
         if kind == "films":  # les copies de films adultes vivent dans leur propre sous-dossier

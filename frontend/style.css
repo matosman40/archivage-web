@@ -1400,3 +1400,37 @@ textarea { width: 100%; font-family: var(--mono); font-size: 12.5px; resize: ver
   .auto-card-actions { justify-content: flex-start; }
   .auto-editor { padding: 14px; }
 }
+
+/* Dossiers par disque, déplacement dans le disque et suivi (version 48) */
+.disk-destinations { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 0; border-top: 1px solid var(--border-soft); margin-top: 6px; }
+.disk-dest-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.disk-dest-list code { font-family: var(--mono); font-size: 12px; color: var(--text-2); word-break: break-all; }
+
+.folder-modal { max-width: 560px; width: calc(100% - 32px); display: flex; flex-direction: column; gap: 10px; }
+.folder-modal .modal-actions { flex-wrap: wrap; }
+.folder-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.folder-crumbs .btn { min-height: 30px; padding: 4px 8px; }
+.folder-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow-y: auto; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
+.folder-list li + li { border-top: 1px solid var(--border-soft); }
+.folder-item { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--text); padding: 9px 12px; font: inherit; cursor: pointer; }
+.folder-item:hover, .folder-item:focus-visible { background: var(--surface-2); outline: none; }
+.folder-create { display: flex; gap: 8px; align-items: center; }
+.folder-create input { flex: 1; min-width: 0; }
+
+.disk-moves { margin: 12px 0 14px; }
+.disk-moves-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px; }
+.disk-moves-tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.disk-moves-list { display: flex; flex-direction: column; gap: 8px; max-height: 380px; overflow-y: auto; margin-top: 6px; }
+.disk-move { background: var(--surface); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
+.disk-move-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.disk-move-name { font-size: 14px; word-break: break-word; }
+.disk-move-path { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+.disk-move-arrow { color: var(--muted); margin: 0 2px; }
+.disk-move-detail { color: var(--text-2); }
+.move-status { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-2); background: var(--surface-2); white-space: nowrap; }
+.move-status.s-ok { color: var(--ok); background: var(--ok-soft); border-color: rgba(108, 192, 138, 0.3); }
+.move-status.s-en_cours { color: var(--info); background: rgba(134, 180, 230, 0.12); border-color: rgba(134, 180, 230, 0.3); }
+.move-status.s-erreur { color: var(--danger); background: var(--danger-soft); border-color: rgba(234, 122, 114, 0.35); }
+.move-status.s-partiel, .move-status.s-interrompu { color: var(--warn); background: var(--warn-soft); border-color: rgba(229, 178, 90, 0.3); }
+.move-status.s-ignore { color: var(--muted); }
+.disk-moves .empty-msg { padding: 4px 2px; }

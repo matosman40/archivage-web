@@ -85,6 +85,39 @@ def _as_relative_subdir(value) -> str:
     return "/".join(morceaux)
 
 
+DISK_FOLDER_KINDS = ("films", "series", "ebooks")
+MAX_DISK_FOLDERS = 50
+
+
+def _as_disk_folders(value) -> dict:
+    """Dossier de destination propre à chaque disque (version 48) :
+    {racine absolue du disque: {type: sous-dossier relatif}}. Un type absent (ou vide) garde
+    le sous-dossier global de Réglages. Une valeur invalide refuse l'enregistrement."""
+    if value in (None, "", {}):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("dossiers par disque : objet attendu")
+    if len(value) > MAX_DISK_FOLDERS:
+        raise ValueError(f"{MAX_DISK_FOLDERS} disques au maximum")
+    out: dict = {}
+    for root, kinds in value.items():
+        root_norm = os.path.normpath(str(root).strip())
+        if not root_norm.startswith("/") or root_norm == "/":
+            raise ValueError(f"disque « {root} » : chemin absolu d'un disque attendu")
+        if not isinstance(kinds, dict):
+            raise ValueError(f"disque « {root} » : objet attendu par type")
+        for kind, sub in kinds.items():
+            if kind not in DISK_FOLDER_KINDS:
+                raise ValueError(f"disque « {root} » : type inconnu « {kind} »")
+            if sub is None or str(sub).strip().strip("/") == "":
+                continue  # vide : retour au sous-dossier global
+            cleaned = _as_relative_subdir(sub)
+            if not cleaned:
+                continue
+            out.setdefault(root_norm, {})[kind] = cleaned
+    return out
+
+
 # Types de transfert, avec leur libellé. Chaque type a une vitesse par plage (clé « <type>_mbps »)
 # et son emplacement dans la file. Un nouvel hébergeur s'ajoute ici ET dans l'interface
 # (champ de vitesse de frontend/app.js) : sans champ, enregistrer remet sa vitesse à 0.
@@ -222,6 +255,8 @@ _FIELD_DEFS = {
     "archive_copy_dir": (lambda: _as_abs_dir(os.environ.get("ARCHIVE_COPY_DIR", "")), _as_abs_dir),
     # Plages horaires des transferts et vitesse de chacune (voir scheduler.py).
     "transfer_windows": (lambda: _as_windows(DEFAULT_TRANSFER_WINDOWS), _as_windows),
+    # Dossier de destination propre à chaque disque externe (version 48) ; vide = dossiers globaux.
+    "disk_folders": (lambda: {}, _as_disk_folders),
 }
 
 FIELDS = list(_FIELD_DEFS.keys())
@@ -241,6 +276,12 @@ class Settings:
         # (copie, déplacement, suppression, destination) doivent les couvrir.
         return (self.source_dirs_films + self.source_dirs_adultes
                 + self.source_dirs_series + self.source_dirs_ebooks)
+
+    def subdir_for(self, root: str, kind: str) -> str:
+        """Sous-dossier de destination d'un type sur un disque : le dossier propre à ce disque
+        s'il est défini (version 48), sinon le sous-dossier global de Réglages."""
+        override = (self.disk_folders or {}).get(os.path.normpath(root), {}).get(kind)
+        return override or getattr(self, f"dest_subdir_{kind}")
 
     @property
     def video_extensions_tuple(self) -> tuple:

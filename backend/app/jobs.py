@@ -23,7 +23,7 @@ import time
 import uuid
 from typing import Optional
 
-from . import config, disks, onefichier, scheduler, security
+from . import config, disk_moves, disks, onefichier, scheduler, security
 from .logs import log_action
 
 PROGRESS_RE = re.compile(r"(\d+)%")
@@ -107,6 +107,8 @@ class Job:
     def emit(self, event: dict) -> None:
         event = {**event, "ts": time.time()}
         self.events.append(event)
+        if self.operation in ("copy", "move"):
+            disk_moves.on_job_event(self, event)  # suivi des copies et déplacements (version 48)
         for q in list(self.subscribers):
             q.put_nowait(event)
 

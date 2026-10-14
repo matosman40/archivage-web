@@ -407,6 +407,8 @@ function onDiskClick(e) {
     renderDiskView();
     return;
   }
+  const folders = e.target.closest("[data-disk-folders]");
+  if (folders) { openDiskFolders(folders.dataset.diskFolders); return; }
   const forget = e.target.closest("[data-disk-forget]");
   if (forget) { forgetDisk(forget.dataset.diskForget); }
   const integrity = e.target.closest("[data-disk-integrity]");

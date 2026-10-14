@@ -154,6 +154,7 @@ function diskCardHtml(disk) {
     ? ""
     : `<div class="disk-card-foot"><button type="button" class="btn btn-ghost small" data-disk-forget="${esc(disk.path)}">Retirer de la liste</button></div>`;
   const integrity = diskIntegrityHtml(disk);
+  const destinations = diskDestinationsHtml(disk);
   return `
     <article class="disk-card ${disk.connected ? "is-online" : "is-offline"}${active ? " is-active" : ""}">
       <button type="button" class="disk-card-main" data-disk-filter="${esc(disk.path)}" aria-pressed="${active}"
@@ -168,6 +169,7 @@ function diskCardHtml(disk) {
         <span class="disk-foot muted small">${esc(formatSize(total))}${free} · ${esc(seen)}</span>
       </button>
       ${forget}
+      ${destinations}
       ${integrity}
     </article>`;
 }
@@ -352,6 +354,22 @@ function renderDiskActions() {
     : `<option value="">Aucun dossier configuré</option>`;
   if (dirs.includes(previous)) dirSel.value = previous;
 
+  // Même disque, autre dossier : seuls les dossiers reconnus par la bibliothèque sont proposés.
+  const selDisks = [...new Set(sel.map((r) => r.diskPath))];
+  const withinDisk = selDisks.length === 1 ? d.disks.find((x) => x.path === selDisks[0]) : null;
+  const here = new Set(sel.map((r) => r.folder || ""));
+  const withinOptions = withinDisk
+    ? ((withinDisk.subdirs || {})[d.kind] || []).filter((o) => !(here.size === 1 && here.has(o)))
+    : [];
+  const withinSel = $("disk-within-dir");
+  const withinPrevious = withinSel.value;
+  withinSel.innerHTML = withinOptions.length
+    ? withinOptions.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join("")
+    : `<option value="">Aucun autre dossier reconnu</option>`;
+  if (withinOptions.includes(withinPrevious)) withinSel.value = withinPrevious;
+  $("disk-within").disabled = !sel.length || selDisks.length !== 1 || !withinOptions.length;
+  $("disk-within").title = selDisks.length > 1 ? "Sélectionne des éléments d'un seul disque." : "";
+
   const any = sel.length > 0;
   const serverTitle = dirs.length ? "" : "Configure le dossier source de ce type dans Réglages.";
   $("disk-copy").disabled = !any || !dirs.length;
@@ -413,6 +431,7 @@ async function loadDiskLibrary({ force = false, silent = false } = {}) {
     d.onefichierConfigured = !!data.onefichier_configured;
     d.loaded = true;
     d.error = null;
+    loadDiskMoves();
     // Fiches TMDB et jaquettes : on relit la liste tant que le calcul tourne.
     clearTimeout(d.metaTimer);
     if (data.meta_running) d.metaTimer = setTimeout(() => loadDiskLibrary({ silent: true }), 3000);
@@ -599,4 +618,259 @@ async function forgetDisk(path) {
   } catch (err) {
     toast(err.message, "error");
   }
+}
+
+// ---------------------------------------------------------------------
+// Version 48 : dossier de destination par disque, déplacement dans le même disque, suivi
+// ---------------------------------------------------------------------
+
+const DISK_KIND_NAME = { films: "Films", series: "Séries", ebooks: "Ebooks" };
+
+// Dossiers de destination effectifs d'un disque connecté (le dossier propre au disque est signalé).
+function diskDestinationsHtml(disk) {
+  if (!disk.connected) return "";
+  const dest = disk.destinations || {};
+  const lines = Object.keys(DISK_KIND_NAME).map((kind) => {
+    const x = dest[kind] || {};
+    const custom = x.custom ? ` <span class="chip accent">propre à ce disque</span>` : "";
+    return `<li><span class="muted small">${esc(DISK_KIND_NAME[kind])}</span> <code>${esc(x.folder || "—")}</code>${custom}</li>`;
+  }).join("");
+  return `
+    <div class="disk-destinations">
+      <span class="muted small">Dossiers de destination</span>
+      <ul class="disk-dest-list">${lines}</ul>
+      <div class="disk-card-foot">
+        <button type="button" class="btn btn-ghost small" data-disk-folders="${esc(disk.path)}">Choisir les dossiers</button>
+      </div>
+    </div>`;
+}
+
+// --- Fenêtre de choix du dossier de destination ---------------------------------
+
+async function openDiskFolders(path) {
+  const disk = state.disk.disks.find((x) => x.path === path);
+  if (!disk || !disk.connected) { toast("Ce disque n'est pas connecté.", "error"); return; }
+  state.disk.picker = { path, label: disk.label, kind: state.disk.kind, folder: "", data: null };
+  $("disk-folder-kind").value = state.disk.kind;
+  $("disk-folder-new").value = "";
+  $("disk-folder-modal").classList.remove("hidden");
+  await loadDiskPicker("");
+}
+
+function closeDiskFolders() {
+  state.disk.picker = null;
+  $("disk-folder-modal").classList.add("hidden");
+}
+
+async function loadDiskPicker(folder) {
+  const pk = state.disk.picker;
+  if (!pk) return;
+  try {
+    const q = `path=${encodeURIComponent(pk.path)}&folder=${encodeURIComponent(folder || "")}`;
+    pk.data = await api(`/api/disks/folders?${q}`);
+    pk.folder = pk.data.folder;
+    renderDiskPicker();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+function renderDiskPicker() {
+  const pk = state.disk.picker;
+  if (!pk || !pk.data) return;
+  const disk = state.disk.disks.find((x) => x.path === pk.path);
+  const kindName = DISK_KIND_NAME[pk.kind] || pk.kind;
+  $("disk-folder-title").textContent = `Dossier des ${kindName.toLowerCase()}`;
+  $("disk-folder-disk").textContent = `Disque : ${pk.label}`;
+  const current = disk && disk.destinations ? disk.destinations[pk.kind] : null;
+  $("disk-folder-current").innerHTML = current
+    ? `Actuellement : <code>${esc(current.folder)}</code> ${current.custom ? "(propre à ce disque)" : "(dossier global de Réglages)"}`
+    : "";
+  // Fil d'Ariane : racine du disque, puis chaque dossier traversé (cliquable).
+  const parts = pk.folder ? pk.folder.split("/") : [];
+  const crumbs = [`<button type="button" class="btn btn-ghost small" data-picker-go="">${esc(pk.data.label)}</button>`];
+  parts.forEach((name, i) => {
+    crumbs.push(`<span class="muted">/</span><button type="button" class="btn btn-ghost small" data-picker-go="${esc(parts.slice(0, i + 1).join("/"))}">${esc(name)}</button>`);
+  });
+  $("disk-folder-crumbs").innerHTML = crumbs.join("");
+  const folders = pk.data.folders || [];
+  $("disk-folder-list").innerHTML = folders.length
+    ? folders.map((f) => `<li><button type="button" class="folder-item" data-picker-go="${esc(f.folder)}">${esc(f.name)}</button></li>`).join("")
+    : `<li class="muted small">Aucun sous-dossier ici.</li>`;
+  const recognized = !!disk && !!pk.folder && ((disk.subdirs || {})[pk.kind] || []).includes(pk.folder);
+  let note;
+  if (!pk.folder) note = "Entre dans un dossier du disque pour le choisir. La racine du disque n'est pas une destination.";
+  else if (recognized) note = "Ce dossier est reconnu par la bibliothèque : les éléments qui y sont copiés y apparaissent.";
+  else note = "Ce dossier n'est pas reconnu par la bibliothèque : les éléments copiés ici n'y seront pas listés.";
+  if (pk.data.truncated) note += " Liste tronquée : affiche moins de dossiers.";
+  $("disk-folder-note").textContent = note;
+  $("disk-folder-choose").disabled = !pk.folder;
+  $("disk-folder-create").disabled = false;
+}
+
+// Enregistre le dossier du type choisi sur ce disque (vide = retour au dossier global).
+async function saveDiskFolder(folder, create) {
+  const pk = state.disk.picker;
+  if (!pk) return null;
+  try {
+    const data = await api("/api/disks/folder", {
+      method: "PUT",
+      body: JSON.stringify({ path: pk.path, kind: pk.kind, folder, create }),
+    });
+    toast(`${DISK_KIND_NAME[pk.kind]} sur ${pk.label} : ${data.effective}`, "success");
+    await loadDiskLibrary({ silent: true });
+    return data;
+  } catch (err) {
+    toast(err.message, "error");
+    return null;
+  }
+}
+
+async function chooseDiskFolder() {
+  const pk = state.disk.picker;
+  if (!pk || !pk.folder) return;
+  if (await saveDiskFolder(pk.folder, false)) await loadDiskPicker(pk.folder);
+}
+
+async function createDiskFolder() {
+  const pk = state.disk.picker;
+  if (!pk) return;
+  const name = $("disk-folder-new").value.trim();
+  if (!name || name.includes("/") || name === "." || name === "..") {
+    toast("Nom de dossier invalide (sans « / », ni « . » ou « .. »).", "error");
+    return;
+  }
+  const folder = pk.folder ? `${pk.folder}/${name}` : name;
+  if (await saveDiskFolder(folder, true)) {
+    $("disk-folder-new").value = "";
+    await loadDiskPicker(folder);
+  }
+}
+
+async function resetDiskFolder() {
+  const pk = state.disk.picker;
+  if (!pk) return;
+  if (await saveDiskFolder("", false)) await loadDiskPicker(pk.folder);
+}
+
+// --- Déplacement dans le même disque ---------------------------------------------
+
+async function diskWithinMove() {
+  const rows = diskSelectedRows();
+  const folder = $("disk-within-dir").value;
+  if (!rows.length || !folder) return;
+  const disk = state.disk.disks.find((x) => x.path === rows[0].diskPath);
+  const label = disk ? disk.label : "ce disque";
+  const ok = await askConfirm({
+    title: "Déplacer dans le disque",
+    body: `${NF0.format(rows.length)} élément(s) vers ${folder} sur ${label}. Rien n'est copié : chaque élément change de dossier, sans relecture. Si un élément porte déjà ce nom là-bas, rien n'est déplacé.`,
+    names: rows.map(diskTitle),
+  });
+  if (!ok) return;
+  try {
+    const data = await api("/api/disk-library/move", {
+      method: "POST",
+      body: JSON.stringify({ paths: rows.map((r) => r.path), folder }),
+    });
+    state.disk.selected.clear();
+    const moved = (data.moved || []).length;
+    const errors = (data.errors || []).length;
+    if (data.dry_run) toast(`Simulation : ${moved} déplacement(s) prévu(s). Rien n'a été déplacé.`, "success");
+    else if (errors) toast(`${moved} déplacé(s), ${errors} en erreur : ${data.errors[0].error}`, "error");
+    else toast(`${moved} élément(s) déplacé(s) vers ${folder}.`, "success");
+    await loadDiskLibrary({ force: true, silent: true });
+    loadDiskMoves();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// --- Suivi des copies et déplacements --------------------------------------------
+
+async function loadDiskMoves() {
+  if (state.surface !== "disk") return;
+  const filter = $("disk-moves-filter").value;
+  const seq = (state.disk.movesSeq || 0) + 1;
+  state.disk.movesSeq = seq;
+  try {
+    const data = await api(`/api/disk-moves?status=${encodeURIComponent(filter)}&limit=200`);
+    if (seq !== state.disk.movesSeq) return;  // une relecture plus récente a déjà répondu
+    state.disk.moves = data;
+    renderDiskMoves();
+  } catch (err) {
+    $("disk-moves-count").textContent = `Suivi indisponible : ${err.message}`;
+  }
+}
+
+function renderDiskMoves() {
+  const data = state.disk.moves;
+  if (!data) return;
+  const c = data.counts || {};
+  const problems = (c.erreur || 0) + (c.partiel || 0) + (c.interrompu || 0);
+  $("disk-moves-count").textContent = `${NF0.format(c.en_cours || 0)} en cours · ${NF0.format(c.ok || 0)} terminé(s) · `
+    + `${NF0.format(problems)} problème(s) · ${NF0.format(data.total || 0)} au total`;
+  $("disk-moves-clear").disabled = !(c.ok || c.erreur || c.partiel || c.ignore || c.interrompu);
+  $("disk-moves-list").innerHTML = data.items.length
+    ? data.items.map(diskMoveHtml).join("")
+    : `<p class="muted small empty-msg">Aucun transfert à afficher. Les copies et déplacements vers ou depuis un disque, et les déplacements dans un disque, sont suivis ici.</p>`;
+}
+
+function diskMoveHtml(e) {
+  const trail = e.destination ? `<span class="disk-move-arrow" aria-hidden="true">→</span> ${esc(e.destination)}` : "";
+  return `
+    <article class="disk-move status-${esc(e.status)}">
+      <div class="disk-move-head">
+        <span class="move-status s-${esc(e.status)}">${esc(e.status_label)}</span>
+        <strong class="disk-move-name">${esc(e.name)}</strong>
+        <span class="muted small">${esc(e.operation)} · ${esc(fmtDateTime(e.updated || e.at))}</span>
+      </div>
+      <div class="muted small disk-move-path">${esc(e.source || "")} ${trail}</div>
+      ${e.detail ? `<div class="small disk-move-detail">${esc(e.detail)}</div>` : ""}
+    </article>`;
+}
+
+async function clearDiskMoves() {
+  const ok = await askConfirm({
+    title: "Effacer l'historique",
+    body: "Les transferts terminés ou en erreur sont retirés du suivi. Les transferts en cours ne sont pas touchés.",
+  });
+  if (!ok) return;
+  try {
+    const data = await api("/api/disk-moves/clear", { method: "POST" });
+    toast(`${NF0.format(data.removed || 0)} entrée(s) effacée(s).`, "success");
+    loadDiskMoves();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+// Branchements : fenêtre des dossiers, déplacement dans le disque, suivi.
+function bindDiskExtras() {
+  $("disk-folder-kind").addEventListener("change", (e) => {
+    if (!state.disk.picker) return;
+    state.disk.picker.kind = e.target.value;
+    renderDiskPicker();
+  });
+  const go = (e) => {
+    const target = e.target.closest("[data-picker-go]");
+    if (target) loadDiskPicker(target.dataset.pickerGo);
+  };
+  $("disk-folder-crumbs").addEventListener("click", go);
+  $("disk-folder-list").addEventListener("click", go);
+  $("disk-folder-choose").addEventListener("click", chooseDiskFolder);
+  $("disk-folder-create").addEventListener("click", createDiskFolder);
+  $("disk-folder-reset").addEventListener("click", resetDiskFolder);
+  $("disk-folder-close").addEventListener("click", closeDiskFolders);
+  $("disk-folder-modal").addEventListener("click", (e) => {
+    if (e.target.id === "disk-folder-modal") closeDiskFolders();
+  });
+  $("disk-folder-new").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); createDiskFolder(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && state.disk.picker) closeDiskFolders();
+  });
+  $("disk-within").addEventListener("click", diskWithinMove);
+  $("disk-moves-filter").addEventListener("change", loadDiskMoves);
+  $("disk-moves-clear").addEventListener("click", clearDiskMoves);
 }

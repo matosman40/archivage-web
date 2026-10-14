@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' fill='%23e0a040'/%3E%3Ccircle cx='12' cy='12' r='3' fill='%230f1115'/%3E%3C/svg%3E">
 <!-- IMPORTANT : incrémenter ?v=... ci-dessous (style.css et app.js) à chaque
      modification, sinon les navigateurs peuvent exécuter une ancienne version. -->
-<link rel="stylesheet" href="style.css?v=20261014-v47">
+<link rel="stylesheet" href="style.css?v=20261014-v48">
 </head>
 <body>
 
@@ -425,6 +425,26 @@
       </div>
     </section>
 
+    <section id="disk-moves" class="disk-moves" aria-label="Suivi des copies et déplacements">
+      <div class="disk-moves-head">
+        <h3 class="of-section-title">Suivi des copies et déplacements</h3>
+        <div class="disk-moves-tools">
+          <label class="disk-field">
+            <span class="label">Afficher</span>
+            <select id="disk-moves-filter" aria-label="Filtrer le suivi">
+              <option value="tous">Tout</option>
+              <option value="en_cours">En cours</option>
+              <option value="terminés">Terminés</option>
+              <option value="problèmes">Problèmes</option>
+            </select>
+          </label>
+          <button id="disk-moves-clear" class="btn btn-ghost small" type="button">Effacer l'historique terminé</button>
+        </div>
+      </div>
+      <p id="disk-moves-count" class="muted small"></p>
+      <div id="disk-moves-list" class="disk-moves-list" aria-live="polite"></div>
+    </section>
+
     <div id="disk-actions" class="disk-actions hidden" role="region" aria-label="Actions sur la sélection">
       <div class="disk-actions-text">
         <strong id="disk-sel-count">0</strong> sélectionné(s) <span class="muted" id="disk-sel-size"></span>
@@ -439,6 +459,13 @@
         <button id="disk-move" class="btn action move" type="button" disabled>Déplacer vers le serveur</button>
       </div>
       <div class="disk-actions-row">
+        <label class="disk-field">
+          <span class="label">Même disque, autre dossier</span>
+          <select id="disk-within-dir" aria-label="Dossier du même disque où déplacer la sélection"></select>
+        </label>
+        <button id="disk-within" class="btn action move" type="button" disabled>Déplacer dans ce disque</button>
+      </div>
+      <div class="disk-actions-row">
         <button id="disk-1f" class="btn action cloud" type="button" disabled>Envoyer sur 1fichier</button>
         <label class="disk-check" id="disk-1f-remove-label">
           <input id="disk-1f-remove" type="checkbox"> Retirer du disque après sauvegarde vérifiée
@@ -448,6 +475,34 @@
     </div>
   </section>
 </main>
+
+<div id="disk-folder-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="disk-folder-title">
+  <div class="modal folder-modal">
+    <h3 id="disk-folder-title">Dossiers de destination</h3>
+    <p id="disk-folder-disk" class="muted small"></p>
+    <label class="disk-field">
+      <span class="label">Type</span>
+      <select id="disk-folder-kind" aria-label="Type de média">
+        <option value="films">Films</option>
+        <option value="series">Séries</option>
+        <option value="ebooks">Ebooks</option>
+      </select>
+    </label>
+    <p id="disk-folder-current" class="small"></p>
+    <nav id="disk-folder-crumbs" class="folder-crumbs" aria-label="Chemin sur le disque"></nav>
+    <ul id="disk-folder-list" class="folder-list" aria-label="Sous-dossiers"></ul>
+    <p id="disk-folder-note" class="muted small"></p>
+    <div class="folder-create">
+      <input id="disk-folder-new" type="text" placeholder="Nouveau sous-dossier" aria-label="Nom du nouveau sous-dossier" autocomplete="off">
+      <button id="disk-folder-create" class="btn btn-ghost small" type="button">Créer et choisir</button>
+    </div>
+    <div class="modal-actions">
+      <button id="disk-folder-reset" class="btn btn-ghost" type="button">Revenir au dossier global</button>
+      <button id="disk-folder-choose" class="btn btn-primary" type="button">Choisir ce dossier</button>
+      <button id="disk-folder-close" class="btn btn-ghost" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
 
 <!-- ================================================================ -->
 <div id="selbar" class="selbar hidden" role="region" aria-label="Sélection en cours">
@@ -754,16 +809,16 @@
 
 </div>
 
-<script src="js/core.js?v=20261014-v47"></script>
-<script src="js/list.js?v=20261014-v47"></script>
-<script src="js/person.js?v=20261014-v47"></script>
-<script src="js/shell.js?v=20261014-v47"></script>
-<script src="js/onefichier.js?v=20261014-v47"></script>
-<script src="js/automations.js?v=20261014-v47"></script>
-<script src="js/disks.js?v=20261014-v47"></script>
-<script src="js/identify.js?v=20261014-v47"></script>
-<script src="js/jobs.js?v=20261014-v47"></script>
-<script src="js/settings.js?v=20261014-v47"></script>
-<script src="js/app.js?v=20261014-v47"></script>
+<script src="js/core.js?v=20261014-v48"></script>
+<script src="js/list.js?v=20261014-v48"></script>
+<script src="js/person.js?v=20261014-v48"></script>
+<script src="js/shell.js?v=20261014-v48"></script>
+<script src="js/onefichier.js?v=20261014-v48"></script>
+<script src="js/automations.js?v=20261014-v48"></script>
+<script src="js/disks.js?v=20261014-v48"></script>
+<script src="js/identify.js?v=20261014-v48"></script>
+<script src="js/jobs.js?v=20261014-v48"></script>
+<script src="js/settings.js?v=20261014-v48"></script>
+<script src="js/app.js?v=20261014-v48"></script>
 </body>
 </html>
