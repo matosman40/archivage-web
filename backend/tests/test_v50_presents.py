@@ -214,3 +214,29 @@ def test_test_reussi_leve_la_marque_corrompu(env, monkeypatch):
     resultat = asyncio.run(onefichier.test_restore("402"))
     assert resultat["ok"] is True
     assert onefichier._get_entry("402")["corrompu"] is False
+
+
+def test_series_gardees_si_un_de_leurs_dossiers_existe(env, tmp_path):
+    from app import main
+    present = tmp_path / "Serie"
+    present.mkdir()
+    items = [
+        {"name": "Serie", "paths": [str(present), str(tmp_path / "absent")]},
+        {"name": "Disparue", "paths": [str(tmp_path / "absent")]},
+        {"name": "Sans chemin"},
+    ]
+    assert [it["name"] for it in main._presents(items)] == ["Serie"]
+
+
+def test_route_recherche_series_renvoie_les_series(env, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from app import main, scan_cache
+    dossier = tmp_path / "Serie"
+    dossier.mkdir()
+
+    async def faux_search(kind, term):
+        return [{"name": "Serie", "paths": [str(dossier)]}], {"built_at": 0, "refreshing": False}
+
+    monkeypatch.setattr(scan_cache, "search", faux_search)
+    reponse = TestClient(main.app).post("/api/search", json={"media_type": "series", "term": ""}).json()
+    assert [it["name"] for it in reponse["items"]] == ["Serie"]

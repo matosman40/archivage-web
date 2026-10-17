@@ -531,10 +531,17 @@ def adult_set_code(req: AdultCodeRequest, request: Request, response: Response):
     return {"unlocked": True, "code_set": True}
 
 
+def _chemins_de_l_element(it: dict) -> list:
+    if it.get("path"):
+        return [it["path"]]
+    return [p for p in (it.get("paths") or []) if p]  # séries : une liste de dossiers
+
+
 def _presents(items: list) -> list:
     """Éléments dont le fichier ou le dossier existe encore sur le serveur (version 50) : une copie
-    en mémoire ou sur disque peut être plus ancienne que ce qu'il y a réellement."""
-    return [it for it in items if it.get("path") and os.path.lexists(it["path"])]
+    en mémoire ou sur disque peut être plus ancienne que ce qu'il y a réellement. Une série (version 51)
+    n'a pas de « path » mais une liste « paths » : elle est gardée si l'un de ses dossiers existe encore."""
+    return [it for it in items if any(os.path.lexists(p) for p in _chemins_de_l_element(it))]
 
 
 @app.post("/api/search")
