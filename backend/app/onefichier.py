@@ -137,7 +137,8 @@ def _read() -> dict:
         # mots de passe des archives déjà envoyées seraient perdus.
         raise OneFichierError(
             f"index 1fichier illisible ({path}) : {exc}. Rien n'a été modifié ; "
-            f"restaure le fichier depuis une sauvegarde avant de continuer."
+            f"s'il s'agit de droits (Permission denied), lance scripts/volume-archivage.sh proprietaire ; "
+            f"sinon restaure le fichier depuis une sauvegarde avant de continuer."
         )
     if not isinstance(data, dict):
         raise OneFichierError(f"index 1fichier invalide ({path}). Rien n'a été modifié.")

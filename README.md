@@ -2261,3 +2261,32 @@ Les envois absents ou corrompus restent visibles, avec leur marque. Le filtre «
 - `tests/mutations/mutations.py` : retire une garde à la fois dans une copie du dépôt et relance la suite. Une mutation « NON ATTRAPÉE » signale une garde que les tests ne protègent pas. Au dernier passage, 15 mutations sur 15 ont été attrapées.
 
 **Limites.** Le renvoi et les contrôles n'ont pas été essayés sur un vrai compte 1fichier : seules des réponses simulées ont été testées. L'historique ne garde que 20 contrôles. Les scénarios de bout en bout couvrent disques, catalogue, marques 1fichier, compteur et renvoi annulé ; le renvoi confirmé n'est pas joué, car il lancerait un vrai envoi.
+
+## 44. Réinstallation, sauvegarde et droits du volume (version 51)
+
+**Pourquoi.** Une réinstallation qui restaure les données de l'ancienne installation peut casser trois choses : les droits du volume (le conteneur tourne avec PUID/PGID et ne peut pas lire un fichier appartenant à `root`), les chemins sources enregistrés dans `settings.json`, et les dossiers médias qui ne sont pas sous `HOST_MEDIA_ROOT`.
+
+**Sauvegarde et restauration.** `scripts/volume-archivage.sh`, lancé depuis le dossier qui contient `docker-compose.yml` :
+
+    scripts/volume-archivage.sh sauvegarde              # archive .tgz horodatée dans le dossier courant
+    docker compose stop archivage
+    scripts/volume-archivage.sh restaure ARCHIVE.tgz    # refuse si le volume n'est pas vide (FORCE=1 pour remplacer)
+    docker compose up -d
+
+La sauvegarde contient les mots de passe 1fichier : garde-la hors de tout dossier partagé. `restaure` remet automatiquement les droits au PUID/PGID de `.env`.
+
+**Droits seuls.** Si le journal affiche `Permission denied` sur `/data/...` :
+
+    scripts/volume-archivage.sh proprietaire
+    docker compose up -d
+
+**Chemins de `settings.json`.** Les valeurs de `.env` ne sont lues qu'au premier démarrage. Après une restauration, ce sont les chemins enregistrés qui comptent : vérifie-les dans Réglages › Sources. Un chemin absent du conteneur donne un onglet vide sans erreur.
+
+**Médias hors de `HOST_MEDIA_ROOT`.** Renseigne `HOST_EXTRA_MEDIA` dans `.env` (par exemple `/MVE/MEDIA`) : le dossier est monté au même chemin dans le conteneur. Le dossier de travail 1fichier se règle avec `HOST_STAGING_DIR`. Après modification du `.env` ou du compose, recrée le conteneur avec `docker compose up -d`.
+
+**Mettre à jour un serveur qui a déjà modifié `docker-compose.yml`.** Git refuse la mise à jour tant que le fichier est modifié localement. Mettre la copie locale de côté, puis reprendre la version du dépôt :
+
+    git checkout -- docker-compose.yml
+    git pull
+    # reporte HOST_EXTRA_MEDIA et HOST_STAGING_DIR dans .env, puis :
+    docker compose up -d --build

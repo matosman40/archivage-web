@@ -34,6 +34,9 @@ services:
       # fonctionnent depuis cette arborescence (pas de garde-fou lecture
       # seule ici, choix assumé).
       - ${HOST_MEDIA_ROOT:-/DATA/Media}:${HOST_MEDIA_ROOT:-/DATA/Media}:rw
+      # Second dossier média, hors de HOST_MEDIA_ROOT (version 51). Même chemin dedans et dehors.
+      # Exemple : HOST_EXTRA_MEDIA=/MVE/MEDIA dans .env. Vide : un dossier vide est utilisé.
+      - ${HOST_EXTRA_MEDIA:-/var/lib/archivage-extra}:${HOST_EXTRA_MEDIA:-/var/lib/archivage-extra}:rw
       # - /un/autre/chemin/vers/tes/films:/un/autre/chemin/vers/tes/films:rw
 
       # --- Destinations (disques externes) ------------------------------
@@ -56,7 +59,8 @@ services:
       # ici avant l'envoi. Montée au MÊME chemin que sur l'hôte, comme les
       # sources. Le dossier doit exister sur l'hôte et avoir de la place libre.
       # Le chemin est réglable dans Réglages › 1fichier › Dossier de travail.
-      - /MVE/TMP:/MVE/TMP:rw
+      # Chemin réglable (version 51) : HOST_STAGING_DIR dans .env, /MVE/TMP par défaut.
+      - ${HOST_STAGING_DIR:-/MVE/TMP}:${HOST_STAGING_DIR:-/MVE/TMP}:rw
 
       # --- Santé des disques (SMART) ------------------------------------
       # Dossier rempli PAR L'HÔTE (scripts/disk_health.py, lancé chaque jour par un timer).
